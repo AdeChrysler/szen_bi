@@ -154,10 +154,12 @@ services:
       PLANE_API_TOKEN: ${PLANE_API_TOKEN}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # agent images need docker socket access; public/ is baked into the image
     depends_on:
       redis:
         condition: service_healthy

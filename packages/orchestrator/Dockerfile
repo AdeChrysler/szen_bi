@@ -19,6 +19,9 @@ RUN npm install --production
 
 COPY --from=builder /app/dist/ ./dist/
 
+# Connect wizard — pre-built by `npm run build:connect` before docker build
+COPY public/ ./public/
+
 EXPOSE 4000
 
 CMD ["node", "dist/index.js"]
