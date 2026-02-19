@@ -1,0 +1,24 @@
+agents:
+  - name: dev
+    assigneeId: ""
+    dockerImage: zenova-dev-agent:latest
+    tools: []
+    timeout: 3600
+    maxConcurrency: 2
+    promptFile: ""
+
+  - name: strategy
+    assigneeId: ""
+    dockerImage: zenova-strategy-agent:latest
+    tools: []
+    timeout: 3600
+    maxConcurrency: 1
+    promptFile: ""
+
+  - name: landing
+    assigneeId: ""
+    dockerImage: zenova-landing-agent:latest
+    tools: []
+    timeout: 3600
+    maxConcurrency: 1
+    promptFile: ""
