@@ -23,7 +23,11 @@ git push origin "$BRANCH_NAME"
 PR_URL=$(gh pr create --title "[Landing] ${ISSUE_TITLE}" --body "Automated by Zenova Landing Page Agent\n\nTask: ${TASK_ID}\nIssue: ${ISSUE_ID}" --head "$BRANCH_NAME" 2>&1)
 echo "PR created: $PR_URL"
 if [ -n "${PLANE_API_URL:-}" ] && [ -n "${PLANE_API_TOKEN:-}" ]; then
-  curl -s -X POST "${PLANE_API_URL}/api/v1/workspaces/${WORKSPACE_SLUG}/projects/${PROJECT_ID}/issues/${ISSUE_ID}/links/" -H "X-API-Key: ${PLANE_API_TOKEN}" -H "Content-Type: application/json" -d "{\"url\": \"${PR_URL}\", \"title\": \"Pull Request\"}"
-  curl -s -X POST "${PLANE_API_URL}/api/v1/workspaces/${WORKSPACE_SLUG}/projects/${PROJECT_ID}/issues/${ISSUE_ID}/comments/" -H "X-API-Key: ${PLANE_API_TOKEN}" -H "Content-Type: application/json" -d "{\"comment_html\": \"<p>Landing page agent completed. PR: ${PR_URL}</p>\"}"
+  jq -n --arg url "$PR_URL" --arg title "Pull Request" '{url: $url, title: $title}' | \
+    curl -s -X POST "${PLANE_API_URL}/api/v1/workspaces/${WORKSPACE_SLUG}/projects/${PROJECT_ID}/issues/${ISSUE_ID}/links/" \
+      -H "X-API-Key: ${PLANE_API_TOKEN}" -H "Content-Type: application/json" -d @-
+  jq -n --arg html "<p>Landing page agent completed. PR: ${PR_URL}</p>" '{comment_html: $html}' | \
+    curl -s -X POST "${PLANE_API_URL}/api/v1/workspaces/${WORKSPACE_SLUG}/projects/${PROJECT_ID}/issues/${ISSUE_ID}/comments/" \
+      -H "X-API-Key: ${PLANE_API_TOKEN}" -H "Content-Type: application/json" -d @-
 fi
 echo "=== Landing Page Agent Complete ==="

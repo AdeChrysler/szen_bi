@@ -1,3 +1,15 @@
+FROM node:22-slim AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm install
+
+COPY tsconfig.json ./
+COPY src/ ./src/
+
+RUN npx tsc
+
 FROM node:22-slim
 
 WORKDIR /app
@@ -5,7 +17,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --production
 
-COPY dist/ ./dist/
+COPY --from=builder /app/dist/ ./dist/
 
 EXPOSE 4000
 

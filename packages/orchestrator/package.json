@@ -9,6 +9,7 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@hono/node-server": "^1.13.0",
     "hono": "^4.7.0",
     "dockerode": "^4.0.0",
     "ioredis": "^5.4.0",
