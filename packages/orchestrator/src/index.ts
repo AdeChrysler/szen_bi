@@ -91,6 +91,35 @@ app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOStri
 app.get('/status', async (c) => c.json({ running: containers?.getRunning() ?? [], queueDepth: await queue?.depth() ?? 0 }))
 
 // ============================================================
+// Workspace Setup
+// ============================================================
+
+app.post('/setup', async (c) => {
+  try {
+    const body = await c.req.json() as {
+      planeUrl?: string
+      apiToken?: string
+      workspaceSlug?: string
+    }
+    const { planeUrl, apiToken, workspaceSlug } = body
+    if (!planeUrl || !apiToken || !workspaceSlug) {
+      return c.json({ ok: false, error: 'planeUrl, apiToken, workspaceSlug are required' }, 400)
+    }
+    const { bootstrapWorkspace } = await import('./setup.js')
+    const protocol = c.req.header('x-forwarded-proto') ?? 'http'
+    const host = c.req.header('host') ?? 'localhost:4000'
+    const webhookUrl = `${protocol}://${host}/webhooks/plane`
+    const result = await bootstrapWorkspace({
+      planeUrl, apiToken, workspaceSlug, webhookUrl, redis: redisClient,
+    })
+    return c.json({ ok: true, ...result })
+  } catch (err) {
+    return c.json({ ok: false, error: String(err) }, 400)
+  }
+})
+
+
+// ============================================================
 // Admin Settings Page
 // ============================================================
 

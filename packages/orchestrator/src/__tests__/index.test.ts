@@ -31,4 +31,15 @@ describe('orchestrator server', () => {
     const data = await res2.json()
     expect(data.settings).toBeDefined()
   })
+
+  it('/setup returns 400 when required params missing', async () => {
+    const res = await app.request('/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planeUrl: 'http://plane' }),
+    })
+    expect(res.status).toBe(400)
+    const data = await res.json()
+    expect(data.ok).toBe(false)
+  })
 })
