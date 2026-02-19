@@ -20,5 +20,8 @@ if [ -n "${PLANE_API_URL:-}" ] && [ -n "${PLANE_API_TOKEN:-}" ]; then
   jq -n --arg url "$PR_URL" --arg title "Creative Assets PR" '{url: $url, title: $title}' | \
     curl -s -X POST "${PLANE_API_URL}/api/v1/workspaces/${WORKSPACE_SLUG}/projects/${PROJECT_ID}/issues/${ISSUE_ID}/links/" \
       -H "X-API-Key: ${PLANE_API_TOKEN}" -H "Content-Type: application/json" -d @-
+  jq -n --arg html "<p>Creative agent completed. PR: ${PR_URL}</p>" '{comment_html: $html}' | \
+    curl -s -X POST "${PLANE_API_URL}/api/v1/workspaces/${WORKSPACE_SLUG}/projects/${PROJECT_ID}/issues/${ISSUE_ID}/comments/" \
+      -H "X-API-Key: ${PLANE_API_TOKEN}" -H "Content-Type: application/json" -d @-
 fi
 echo "=== Creative Agent Complete ==="

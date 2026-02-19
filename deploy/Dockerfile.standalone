@@ -1,3 +1,376 @@
+# syntax=docker/dockerfile:1
+# Self-contained Dockerfile for zenova-agents orchestrator
+# No build context required - all source is embedded inline
+# Build: docker build -f Dockerfile.standalone -t zenova-orchestrator .
+# Run:   docker run -p 4000:4000 zenova-orchestrator
+
+FROM node:22-slim
+
+WORKDIR /app
+
+# ============================================================
+# 1. Write all source files
+# ============================================================
+
+# -- package.json --
+RUN cat << 'EOF' > /app/package.json
+{
+  "name": "@zenova/orchestrator",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.7.0",
+    "dockerode": "^4.0.0",
+    "ioredis": "^5.4.0",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
+EOF
+
+# -- tsconfig.json --
+RUN cat << 'EOF' > /app/tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
+EOF
+
+# -- src directory --
+RUN mkdir -p /app/src /app/config
+
+# -- src/types.ts --
+RUN cat << 'EOF' > /app/src/types.ts
+export interface PlaneWebhookPayload {
+  event: string
+  action: string
+  data: {
+    id: string
+    name: string
+    description_html?: string
+    description_stripped?: string
+    priority: 'urgent' | 'high' | 'medium' | 'low' | 'none'
+    state: { name: string; group: string }
+    assignees: string[]
+    labels: Array<{ id: string; name: string }>
+    project: string
+    workspace: string
+  }
+}
+
+export interface AgentConfig {
+  name: string
+  assigneeId: string
+  dockerImage: string
+  tools: string[]
+  timeout: number
+  maxConcurrency: number
+  promptFile: string
+}
+
+export interface QueuedTask {
+  id: string
+  issueId: string
+  projectId: string
+  workspaceSlug: string
+  agentType: string
+  priority: number
+  payload: PlaneWebhookPayload['data']
+  queuedAt: string
+}
+
+export interface RunningAgent {
+  taskId: string
+  containerId: string
+  agentType: string
+  issueId: string
+  startedAt: string
+}
+EOF
+
+# -- src/router.ts --
+RUN cat << 'EOF' > /app/src/router.ts
+import type { AgentConfig } from './types.js'
+
+export class AgentRouter {
+  private byAssignee: Map<string, AgentConfig>
+  private byLabel: Map<string, AgentConfig>
+
+  constructor(private agents: AgentConfig[]) {
+    this.byAssignee = new Map(agents.map((a) => [a.assigneeId, a]))
+    this.byLabel = new Map(agents.map((a) => [a.name, a]))
+  }
+
+  routeByAssignee(assigneeId: string): AgentConfig | undefined {
+    return this.byAssignee.get(assigneeId)
+  }
+
+  routeByLabel(labelName: string): AgentConfig | undefined {
+    return this.byLabel.get(labelName.toLowerCase())
+  }
+
+  resolve(issue: { assignees: string[]; labels: Array<{ id: string; name: string }> }): AgentConfig | undefined {
+    for (const assigneeId of issue.assignees) {
+      const config = this.routeByAssignee(assigneeId)
+      if (config) return config
+    }
+    for (const label of issue.labels) {
+      const config = this.routeByLabel(label.name)
+      if (config) return config
+    }
+    return undefined
+  }
+}
+EOF
+
+# -- src/config.ts --
+RUN cat << 'EOF' > /app/src/config.ts
+import { readFileSync } from 'fs'
+import { parse } from 'yaml'
+import { AgentRouter } from './router.js'
+import type { AgentConfig, PlaneWebhookPayload } from './types.js'
+
+export function loadAgentConfigs(configPath: string): AgentConfig[] {
+  const raw = readFileSync(configPath, 'utf-8')
+  const parsed = parse(raw)
+  return parsed.agents as AgentConfig[]
+}
+
+const PRIORITY_MAP: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3, none: 4 }
+
+export class Dispatcher {
+  private router: AgentRouter
+  constructor(private agents: AgentConfig[]) { this.router = new AgentRouter(agents) }
+
+  shouldDispatch(payload: PlaneWebhookPayload): { agentConfig: AgentConfig; priority: number } | null {
+    if (payload.event !== 'issue') return null
+    const agentConfig = this.router.resolve({ assignees: payload.data.assignees, labels: payload.data.labels })
+    if (!agentConfig) return null
+    return { agentConfig, priority: PRIORITY_MAP[payload.data.priority] ?? 2 }
+  }
+}
+EOF
+
+# -- src/queue.ts --
+RUN cat << 'EOF' > /app/src/queue.ts
+import type { Redis } from 'ioredis'
+import type { QueuedTask } from './types.js'
+
+const QUEUE_KEY = 'zenova:task-queue'
+const TASK_PREFIX = 'zenova:task:'
+
+export class TaskQueue {
+  constructor(private redis: Redis) {}
+
+  async enqueue(task: QueuedTask): Promise<void> {
+    await this.redis.set(`${TASK_PREFIX}${task.id}`, JSON.stringify(task))
+    await this.redis.zadd(QUEUE_KEY, task.priority, task.id)
+  }
+
+  async dequeue(): Promise<QueuedTask | null> {
+    const result = await this.redis.zpopmin(QUEUE_KEY)
+    if (!result || result.length === 0) return null
+    const taskId = result[0] as string
+    const data = await this.redis.get(`${TASK_PREFIX}${taskId}`)
+    if (!data) return null
+    await this.redis.del(`${TASK_PREFIX}${taskId}`)
+    return JSON.parse(data)
+  }
+
+  async depth(): Promise<number> {
+    return this.redis.zcard(QUEUE_KEY)
+  }
+
+  async peek(count = 10): Promise<string[]> {
+    return this.redis.zrange(QUEUE_KEY, 0, count - 1)
+  }
+}
+EOF
+
+# -- src/plane-client.ts --
+RUN cat << 'EOF' > /app/src/plane-client.ts
+export class PlaneClient {
+  constructor(
+    private baseUrl: string,
+    private apiToken: string
+  ) {}
+
+  private headers() {
+    return {
+      'Content-Type': 'application/json',
+      'X-API-Key': this.apiToken,
+    }
+  }
+
+  private url(path: string) {
+    return `${this.baseUrl}${path}`
+  }
+
+  async getIssue(workspaceSlug: string, projectId: string, issueId: string) {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/`),
+      { headers: this.headers() }
+    )
+    if (!res.ok) throw new Error(`Failed to get issue: ${res.status}`)
+    return res.json()
+  }
+
+  async updateIssueState(workspaceSlug: string, projectId: string, issueId: string, stateId: string) {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/`),
+      {
+        method: 'PATCH',
+        headers: this.headers(),
+        body: JSON.stringify({ state: stateId }),
+      }
+    )
+    if (!res.ok) throw new Error(`Failed to update issue state: ${res.status}`)
+    return res.json()
+  }
+
+  async addComment(workspaceSlug: string, projectId: string, issueId: string, comment: string) {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/comments/`),
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ comment_html: `<p>${comment}</p>` }),
+      }
+    )
+    if (!res.ok) throw new Error(`Failed to add comment: ${res.status}`)
+    return res.json()
+  }
+
+  async addIssueLink(workspaceSlug: string, projectId: string, issueId: string, url: string, title: string) {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/links/`),
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ url, title }),
+      }
+    )
+    if (!res.ok) throw new Error(`Failed to add link: ${res.status}`)
+    return res.json()
+  }
+
+  async getProjectStates(workspaceSlug: string, projectId: string) {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/states/`),
+      { headers: this.headers() }
+    )
+    if (!res.ok) throw new Error(`Failed to get states: ${res.status}`)
+    return res.json()
+  }
+}
+EOF
+
+# -- src/docker.ts --
+RUN cat << 'EOF' > /app/src/docker.ts
+import type Dockerode from 'dockerode'
+import type { AgentConfig, QueuedTask, RunningAgent } from './types.js'
+
+export type OnAgentComplete = (taskId: string, agentType: string) => void
+
+export class ContainerManager {
+  private running = new Map<string, RunningAgent>()
+  private onComplete: OnAgentComplete | null = null
+
+  constructor(private docker: Dockerode) {}
+
+  setOnComplete(callback: OnAgentComplete): void {
+    this.onComplete = callback
+  }
+
+  async runAgent(agent: AgentConfig, task: QueuedTask, secrets: Record<string, string>): Promise<string> {
+    const containerName = `zenova-agent-${agent.name}-${task.id}-${Date.now()}`
+    const env = [
+      `TASK_ID=${task.id}`,
+      `ISSUE_ID=${task.issueId}`,
+      `PROJECT_ID=${task.projectId}`,
+      `WORKSPACE_SLUG=${task.workspaceSlug}`,
+      `ISSUE_TITLE=${task.payload.name || ''}`,
+      `ISSUE_DESCRIPTION=${task.payload.description_stripped || ''}`,
+      `AGENT_TYPE=${agent.name}`,
+      ...Object.entries(secrets).map(([k, v]) => `${k}=${v}`),
+    ]
+    const container = await this.docker.createContainer({
+      Image: agent.dockerImage,
+      name: containerName,
+      Env: env,
+      HostConfig: {
+        Memory: 2 * 1024 * 1024 * 1024,
+        NanoCpus: 2 * 1e9,
+        AutoRemove: false,
+      },
+    })
+    await container.start()
+    this.running.set(task.id, {
+      taskId: task.id, containerId: container.id, agentType: agent.name,
+      issueId: task.issueId, startedAt: new Date().toISOString(),
+    })
+
+    // Wait for container to finish, then drain queue
+    container.wait().then(async () => {
+      this.running.delete(task.id)
+      try { await container.remove() } catch {}
+      if (this.onComplete) this.onComplete(task.id, agent.name)
+    }).catch(() => {
+      this.running.delete(task.id)
+    })
+
+    // Safety timeout
+    setTimeout(async () => {
+      if (this.running.has(task.id)) {
+        try {
+          const c = this.docker.getContainer(container.id)
+          await c.stop({ t: 10 })
+          await c.remove()
+        } catch {}
+        this.running.delete(task.id)
+      }
+    }, agent.timeout * 1000)
+
+    return container.id
+  }
+
+  getRunningCount(agentType: string): number {
+    return [...this.running.values()].filter(r => r.agentType === agentType).length
+  }
+
+  getRunning(): RunningAgent[] { return [...this.running.values()] }
+  markCompleted(taskId: string): void { this.running.delete(taskId) }
+}
+EOF
+
+# -- src/index.ts --
+# NOTE: This file contains backticks and ${} in template literals.
+# Using quoted heredoc ('INDEXEOF') preserves them literally.
+RUN cat << 'INDEXEOF' > /app/src/index.ts
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { randomUUID, createHmac, timingSafeEqual } from 'crypto'
@@ -303,7 +676,6 @@ app.get('/admin', (c) => c.html(ADMIN_HTML))
 
 app.get('/admin/api/settings', async (c) => {
   const settings = await getAllSettings()
-  // Mask sensitive values for display
   const masked: Record<string, string> = {}
   for (const [k, v] of Object.entries(settings)) {
     if (v && v.length > 8 && (k.includes('TOKEN') || k.includes('KEY') || k.includes('SECRET'))) {
@@ -322,14 +694,12 @@ app.post('/admin/api/settings', async (c) => {
     const { settings, repos } = body as { settings: Record<string, string>; repos: Record<string, string> }
     if (settings) {
       for (const [k, v] of Object.entries(settings)) {
-        // Don't overwrite with masked values
         if (v && !v.includes('...')) {
           await setSetting(k, v)
         }
       }
     }
     if (repos) {
-      // Clear existing and set new
       if (redisClient) await redisClient.del(REPOS_KEY)
       for (const [projectId, url] of Object.entries(repos)) {
         await setRepoForProject(projectId, url)
@@ -435,3 +805,71 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
     console.log(`Admin panel: http://localhost:${port}/admin`)
   })
 }
+INDEXEOF
+
+# -- config/agents.yaml --
+RUN cat << 'EOF' > /app/config/agents.yaml
+agents:
+  - name: dev
+    assigneeId: ""
+    dockerImage: w88kko08cwkw0kc0k84kw4kg:latest
+    tools: [claude-code, git, gh-cli]
+    timeout: 1800
+    maxConcurrency: 3
+    promptFile: packages/agents/dev/prompt.md
+
+  - name: creative
+    assigneeId: ""
+    dockerImage: swsw48kk004skwwssk0s800o:latest
+    tools: [gemini-imagen]
+    timeout: 900
+    maxConcurrency: 2
+    promptFile: packages/agents/creative/prompt.md
+
+  - name: strategy
+    assigneeId: ""
+    dockerImage: ik048w4ckgkkoc0skog0wk4w:latest
+    tools: [claude-code, git]
+    timeout: 1200
+    maxConcurrency: 2
+    promptFile: packages/agents/strategy/prompt.md
+
+  - name: landing
+    assigneeId: ""
+    dockerImage: mo80k0gs40so8oocsc08cw44:latest
+    tools: [claude-code, git]
+    timeout: 2400
+    maxConcurrency: 2
+    promptFile: packages/agents/landing/prompt.md
+EOF
+
+# ============================================================
+# 2. Install dependencies
+# ============================================================
+
+RUN npm install
+
+# ============================================================
+# 3. Compile TypeScript
+# ============================================================
+
+RUN ./node_modules/.bin/tsc
+
+# ============================================================
+# 4. Clean up dev artifacts
+# ============================================================
+
+RUN rm -rf src tsconfig.json && \
+    npm prune --production
+
+# ============================================================
+# 5. Runtime configuration
+# ============================================================
+
+EXPOSE 4000
+
+ENV PORT=4000 \
+    AGENTS_CONFIG=/app/config/agents.yaml \
+    NODE_ENV=production
+
+CMD ["node", "dist/index.js"]

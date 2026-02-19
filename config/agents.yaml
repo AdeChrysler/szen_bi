@@ -1,31 +1,31 @@
 agents:
   - name: dev
     assigneeId: ""
-    dockerImage: zenova/agent-dev:latest
-    tools: [claude-code, codex, git, gh-cli]
+    dockerImage: w88kko08cwkw0kc0k84kw4kg:latest
+    tools: [claude-code, git, gh-cli]
     timeout: 1800
     maxConcurrency: 3
     promptFile: packages/agents/dev/prompt.md
 
   - name: creative
     assigneeId: ""
-    dockerImage: zenova/agent-creative:latest
-    tools: [openai-dalle, openai-gpt]
+    dockerImage: swsw48kk004skwwssk0s800o:latest
+    tools: [gemini-imagen]
     timeout: 900
     maxConcurrency: 2
     promptFile: packages/agents/creative/prompt.md
 
   - name: strategy
     assigneeId: ""
-    dockerImage: zenova/agent-strategy:latest
-    tools: [claude-api, web-search]
+    dockerImage: ik048w4ckgkkoc0skog0wk4w:latest
+    tools: [claude-code, git]
     timeout: 1200
     maxConcurrency: 2
     promptFile: packages/agents/strategy/prompt.md
 
   - name: landing
     assigneeId: ""
-    dockerImage: zenova/agent-landing:latest
+    dockerImage: mo80k0gs40so8oocsc08cw44:latest
     tools: [claude-code, git]
     timeout: 2400
     maxConcurrency: 2
