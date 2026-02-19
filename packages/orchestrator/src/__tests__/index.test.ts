@@ -9,12 +9,12 @@ describe('orchestrator server', () => {
     expect(body.status).toBe('ok')
   })
 
-  it('webhook endpoint accepts POST', async () => {
+  it('webhook endpoint returns 503 when not initialized', async () => {
     const res = await app.request('/webhooks/plane', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event: 'issue.updated', action: 'updated', data: {} })
+      body: JSON.stringify({ event: 'issue', action: 'updated', data: { id: 'i1', name: 'Test', priority: 'high', state: { name: 'Todo', group: 'backlog' }, assignees: ['a1'], labels: [], project: 'p1', workspace: 'w1' } })
     })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(503)
   })
 })
