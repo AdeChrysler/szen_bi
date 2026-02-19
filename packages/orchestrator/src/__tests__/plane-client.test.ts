@@ -35,4 +35,34 @@ describe('PlaneClient', () => {
     const issue = await client.getIssue('ws', 'proj-1', 'issue-1')
     expect(issue.name).toBe('Test')
   })
+
+  it('lists workspace members', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'm1', member__email: 'dev@z.io' }] }) })
+    const members = await client.getWorkspaceMembers('my-workspace')
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://plane-api:8000/api/v1/workspaces/my-workspace/members/',
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-API-Key': 'test-token' }) })
+    )
+    expect(members).toHaveLength(1)
+  })
+
+  it('registers a webhook', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'wh1', url: 'https://hook.io/webhook' }) })
+    const wh = await client.registerWebhook('my-workspace', 'https://hook.io/webhook', 'my-secret')
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://plane-api:8000/api/v1/workspaces/my-workspace/webhooks/',
+      expect.objectContaining({ method: 'POST', body: expect.stringContaining('hook.io') })
+    )
+    expect(wh.id).toBe('wh1')
+  })
+
+  it('resolves a state ID from group name', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ([
+      { id: 's1', name: 'Todo', group: 'backlog' },
+      { id: 's2', name: 'In Progress', group: 'started' },
+      { id: 's3', name: 'In Review', group: 'unstarted' },
+    ]) })
+    const stateId = await client.resolveStateByGroup('ws', 'proj-1', 'started')
+    expect(stateId).toBe('s2')
+  })
 })

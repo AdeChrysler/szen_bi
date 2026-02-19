@@ -71,4 +71,39 @@ export class PlaneClient {
     if (!res.ok) throw new Error(`Failed to get states: ${res.status}`)
     return res.json()
   }
+
+  async getWorkspaceMembers(workspaceSlug: string): Promise<Array<{ id: string; member__email: string; member__display_name: string }>> {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/members/`),
+      { headers: this.headers() }
+    )
+    if (!res.ok) throw new Error(`Failed to get members: ${res.status}`)
+    const data = await res.json()
+    return data.results ?? data
+  }
+
+  async registerWebhook(workspaceSlug: string, url: string, secret: string): Promise<{ id: string; url: string }> {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/webhooks/`),
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({
+          url,
+          is_active: true,
+          issue: true,
+          secret,
+        }),
+      }
+    )
+    if (!res.ok) throw new Error(`Failed to register webhook: ${res.status} ${await res.text()}`)
+    return res.json()
+  }
+
+  async resolveStateByGroup(workspaceSlug: string, projectId: string, group: string): Promise<string | null> {
+    const states = await this.getProjectStates(workspaceSlug, projectId)
+    const list: Array<{ id: string; group: string }> = states.results ?? states
+    const match = list.find((s) => s.group === group)
+    return match?.id ?? null
+  }
 }
