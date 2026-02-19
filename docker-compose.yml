@@ -140,6 +140,7 @@ services:
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./packages/orchestrator/public:/app/public
     depends_on:
       redis:
         condition: service_healthy
