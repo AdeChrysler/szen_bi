@@ -1,0 +1,5 @@
+{
+  "name": "zenova-agents",
+  "private": true,
+  "workspaces": ["packages/*"]
+}
