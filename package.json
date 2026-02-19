@@ -1,5 +1,12 @@
 {
   "name": "zenova-agents",
   "private": true,
-  "workspaces": ["packages/*"]
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build:connect": "npm run build --workspace packages/connect",
+    "dev": "npm run dev --workspace packages/orchestrator",
+    "test": "npm test --workspace packages/orchestrator"
+  }
 }

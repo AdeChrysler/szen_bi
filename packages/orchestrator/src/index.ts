@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { randomUUID, createHmac, timingSafeEqual } from 'crypto'
 import type { PlaneWebhookPayload, QueuedTask } from './types.js'
 import { Dispatcher } from './config.js'
@@ -81,6 +82,13 @@ function verifyWebhookSignature(body: string, signature: string | null): boolean
     return false
   }
 }
+
+// ============================================================
+// Static: Connect Wizard SPA
+// ============================================================
+
+app.get('/connect', (c) => c.redirect('/connect/index.html'))
+app.use('/connect/*', serveStatic({ root: './public' }))
 
 // ============================================================
 // Health & Status
