@@ -1,0 +1,182 @@
+version: "3.9"
+
+# =============================================================================
+# Zenova Agents - Production Docker Compose for Coolify (zenova.id)
+#
+# Coolify uses Traefik as its reverse proxy. Services that need external access
+# are annotated with Traefik labels for automatic HTTPS routing.
+# =============================================================================
+
+x-plane-env: &plane-env
+  DATABASE_URL: postgresql://${POSTGRES_USER:-plane}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB:-plane}
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY: ${SECRET_KEY}
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+  AWS_S3_ENDPOINT_URL: http://minio:9000
+  AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-plane-uploads}
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+  FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
+  WEB_URL: https://${PLANE_DOMAIN:-plane.zenova.id}
+  CORS_ALLOWED_ORIGINS: https://${PLANE_DOMAIN:-plane.zenova.id},https://${PLANE_SPACE_DOMAIN:-space.zenova.id}
+  ENABLE_SIGNUP: ${ENABLE_SIGNUP:-0}
+  GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
+
+services:
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
+  plane-db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-plane}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-plane}
+    volumes:
+      - plane-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-plane}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9090"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Plane.so Services
+  # ---------------------------------------------------------------------------
+  plane-api:
+    image: makeplane/plane-backend:latest
+    restart: unless-stopped
+    command: ./bin/docker-entrypoint-api.sh
+    environment:
+      <<: *plane-env
+    depends_on:
+      plane-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-api.rule=Host(`${PLANE_DOMAIN:-plane.zenova.id}`) && PathPrefix(`/api/`)"
+      - "traefik.http.routers.plane-api.entrypoints=websecure"
+      - "traefik.http.routers.plane-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-api.loadbalancer.server.port=8000"
+
+  plane-worker:
+    image: makeplane/plane-backend:latest
+    restart: unless-stopped
+    command: ./bin/docker-entrypoint-worker.sh
+    environment:
+      <<: *plane-env
+    depends_on:
+      plane-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  plane-beat:
+    image: makeplane/plane-backend:latest
+    restart: unless-stopped
+    command: ./bin/docker-entrypoint-beat.sh
+    environment:
+      <<: *plane-env
+    depends_on:
+      plane-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  plane-web:
+    image: makeplane/plane-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - plane-api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-web.rule=Host(`${PLANE_DOMAIN:-plane.zenova.id}`)"
+      - "traefik.http.routers.plane-web.entrypoints=websecure"
+      - "traefik.http.routers.plane-web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.plane-web.priority=1"
+      - "traefik.http.services.plane-web.loadbalancer.server.port=3000"
+
+  plane-space:
+    image: makeplane/plane-space:latest
+    restart: unless-stopped
+    depends_on:
+      - plane-api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.plane-space.rule=Host(`${PLANE_SPACE_DOMAIN:-space.zenova.id}`)"
+      - "traefik.http.routers.plane-space.entrypoints=websecure"
+      - "traefik.http.routers.plane-space.tls.certresolver=letsencrypt"
+      - "traefik.http.services.plane-space.loadbalancer.server.port=3000"
+
+  # ---------------------------------------------------------------------------
+  # Orchestrator
+  # ---------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: ../packages/orchestrator
+    restart: unless-stopped
+    environment:
+      PORT: "4000"
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379/1
+      PLANE_API_URL: http://plane-api:8000
+      PLANE_API_TOKEN: ${PLANE_API_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      redis:
+        condition: service_healthy
+      plane-api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.orchestrator.rule=Host(`${ORCHESTRATOR_DOMAIN:-orchestrator.zenova.id}`)"
+      - "traefik.http.routers.orchestrator.entrypoints=websecure"
+      - "traefik.http.routers.orchestrator.tls.certresolver=letsencrypt"
+      - "traefik.http.services.orchestrator.loadbalancer.server.port=4000"
+
+volumes:
+  plane-db-data:
+  redis-data:
+  minio-data:
