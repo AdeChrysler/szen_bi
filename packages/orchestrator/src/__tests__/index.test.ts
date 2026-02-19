@@ -17,4 +17,18 @@ describe('orchestrator server', () => {
     })
     expect(res.status).toBe(503)
   })
+
+  it('stores and retrieves workspace-scoped config via API', async () => {
+    const res1 = await app.request('/admin/api/settings/my-workspace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: { GITHUB_TOKEN: 'ghp_abc123' }, repos: {} }),
+    })
+    expect(res1.status).toBe(200)
+
+    const res2 = await app.request('/admin/api/settings/my-workspace')
+    expect(res2.status).toBe(200)
+    const data = await res2.json()
+    expect(data.settings).toBeDefined()
+  })
 })

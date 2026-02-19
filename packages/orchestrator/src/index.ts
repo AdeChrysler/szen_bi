@@ -34,48 +34,41 @@ export function init(deps: {
 }
 
 // Redis-backed settings store
-const SETTINGS_KEY = 'zenova:settings'
-const REPOS_KEY = 'zenova:project-repos'
+function settingsKey(ws: string) { return `zenova:settings:${ws}` }
+function reposKey(ws: string) { return `zenova:repos:${ws}` }
 
-async function getSetting(key: string): Promise<string> {
+async function getSetting(key: string, ws = 'default'): Promise<string> {
   if (!redisClient) return process.env[key] ?? ''
-  const val = await redisClient.hget(SETTINGS_KEY, key)
+  const val = await redisClient.hget(settingsKey(ws), key)
   return val ?? process.env[key] ?? ''
 }
 
-async function getAllSettings(): Promise<Record<string, string>> {
+async function getAllSettings(ws = 'default'): Promise<Record<string, string>> {
   if (!redisClient) return {}
-  const all = await redisClient.hgetall(SETTINGS_KEY)
-  return all ?? {}
+  return await redisClient.hgetall(settingsKey(ws)) ?? {}
 }
 
-async function setSetting(key: string, value: string): Promise<void> {
+async function setSetting(key: string, value: string, ws = 'default'): Promise<void> {
   if (!redisClient) return
-  if (value) {
-    await redisClient.hset(SETTINGS_KEY, key, value)
-  } else {
-    await redisClient.hdel(SETTINGS_KEY, key)
-  }
+  if (value) { await redisClient.hset(settingsKey(ws), key, value) }
+  else { await redisClient.hdel(settingsKey(ws), key) }
 }
 
-async function getRepoForProject(projectId: string): Promise<string> {
+async function getRepoForProject(projectId: string, ws = 'default'): Promise<string> {
   if (!redisClient) return process.env.REPO_URL ?? ''
-  const url = await redisClient.hget(REPOS_KEY, projectId)
-  return url ?? await getSetting('DEFAULT_REPO_URL') ?? process.env.REPO_URL ?? ''
+  const url = await redisClient.hget(reposKey(ws), projectId)
+  return url ?? await getSetting('DEFAULT_REPO_URL', ws) ?? process.env.REPO_URL ?? ''
 }
 
-async function getAllRepos(): Promise<Record<string, string>> {
+async function getAllRepos(ws = 'default'): Promise<Record<string, string>> {
   if (!redisClient) return {}
-  return await redisClient.hgetall(REPOS_KEY) ?? {}
+  return await redisClient.hgetall(reposKey(ws)) ?? {}
 }
 
-async function setRepoForProject(projectId: string, url: string): Promise<void> {
+async function setRepoForProject(projectId: string, url: string, ws = 'default'): Promise<void> {
   if (!redisClient) return
-  if (url) {
-    await redisClient.hset(REPOS_KEY, projectId, url)
-  } else {
-    await redisClient.hdel(REPOS_KEY, projectId)
-  }
+  if (url) { await redisClient.hset(reposKey(ws), projectId, url) }
+  else { await redisClient.hdel(reposKey(ws), projectId) }
 }
 
 function verifyWebhookSignature(body: string, signature: string | null): boolean {
@@ -330,10 +323,42 @@ app.post('/admin/api/settings', async (c) => {
     }
     if (repos) {
       // Clear existing and set new
-      if (redisClient) await redisClient.del(REPOS_KEY)
+      if (redisClient) await redisClient.del(reposKey('default'))
       for (const [projectId, url] of Object.entries(repos)) {
         await setRepoForProject(projectId, url)
       }
+    }
+    return c.json({ ok: true })
+  } catch (err) {
+    return c.json({ ok: false, error: String(err) }, 500)
+  }
+})
+
+app.get('/admin/api/settings/:workspace', async (c) => {
+  const ws = c.req.param('workspace')
+  const settings = await getAllSettings(ws)
+  const masked: Record<string, string> = {}
+  for (const [k, v] of Object.entries(settings)) {
+    if (v && v.length > 8 && (k.includes('TOKEN') || k.includes('KEY') || k.includes('SECRET'))) {
+      masked[k] = v.slice(0, 6) + '...' + v.slice(-4)
+    } else { masked[k] = v }
+  }
+  const repos = await getAllRepos(ws)
+  return c.json({ settings: masked, repos })
+})
+
+app.post('/admin/api/settings/:workspace', async (c) => {
+  const ws = c.req.param('workspace')
+  try {
+    const { settings, repos } = await c.req.json() as { settings: Record<string, string>; repos: Record<string, string> }
+    if (settings) {
+      for (const [k, v] of Object.entries(settings)) {
+        if (v && !v.includes('...')) await setSetting(k, v, ws)
+      }
+    }
+    if (repos) {
+      if (redisClient) await redisClient.del(reposKey(ws))
+      for (const [pid, url] of Object.entries(repos)) await setRepoForProject(pid, url, ws)
     }
     return c.json({ ok: true })
   } catch (err) {
@@ -386,12 +411,12 @@ app.post('/webhooks/plane', async (c) => {
   }
 
   // Build secrets from Redis settings + env fallbacks
-  const repoUrl = await getRepoForProject(task.projectId)
+  const repoUrl = await getRepoForProject(task.projectId, task.workspaceSlug)
   const secrets = {
-    GITHUB_TOKEN: await getSetting('GITHUB_TOKEN') || process.env.GITHUB_TOKEN || '',
-    CLAUDE_CODE_OAUTH_TOKEN: await getSetting('CLAUDE_CODE_OAUTH_TOKEN') || process.env.CLAUDE_CODE_OAUTH_TOKEN || '',
-    ANTHROPIC_API_KEY: await getSetting('ANTHROPIC_API_KEY') || process.env.ANTHROPIC_API_KEY || '',
-    GEMINI_API_KEY: await getSetting('GEMINI_API_KEY') || process.env.GEMINI_API_KEY || '',
+    GITHUB_TOKEN: await getSetting('GITHUB_TOKEN', task.workspaceSlug) || process.env.GITHUB_TOKEN || '',
+    CLAUDE_CODE_OAUTH_TOKEN: await getSetting('CLAUDE_CODE_OAUTH_TOKEN', task.workspaceSlug) || process.env.CLAUDE_CODE_OAUTH_TOKEN || '',
+    ANTHROPIC_API_KEY: await getSetting('ANTHROPIC_API_KEY', task.workspaceSlug) || process.env.ANTHROPIC_API_KEY || '',
+    GEMINI_API_KEY: await getSetting('GEMINI_API_KEY', task.workspaceSlug) || process.env.GEMINI_API_KEY || '',
     PLANE_API_URL: process.env.PLANE_API_URL ?? '',
     PLANE_API_TOKEN: process.env.PLANE_API_TOKEN ?? '',
     REPO_URL: repoUrl,
