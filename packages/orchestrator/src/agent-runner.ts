@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
-import { writeFile, mkdir } from 'fs/promises'
-import { homedir } from 'os'
+import { writeFile, mkdir, mkdtemp } from 'fs/promises'
+import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import Anthropic from '@anthropic-ai/sdk'
 import { PlaneClient } from './plane-client.js'
@@ -226,8 +226,6 @@ export async function runAutonomousAgent(
   }
 
   // 3. Set up working directory
-  const { mkdtemp } = await import('fs/promises')
-  const { tmpdir } = await import('os')
   const workDir = await mkdtemp(`${tmpdir()}/claude-work-${commentData.issue_id.slice(0, 8)}-`)
 
   // 4. Write MCP config with Plane MCP (read + write tools)
@@ -361,6 +359,10 @@ async function runWithClaudeAutonomous(
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
           NO_COLOR: '1',
           GIT_TERMINAL_PROMPT: '0',
+          GIT_AUTHOR_NAME: 'Claude Agent',
+          GIT_AUTHOR_EMAIL: 'claude-agent@zenova.id',
+          GIT_COMMITTER_NAME: 'Claude Agent',
+          GIT_COMMITTER_EMAIL: 'claude-agent@zenova.id',
         },
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 300_000,
