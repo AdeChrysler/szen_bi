@@ -91,7 +91,61 @@ app.get('/connect', (c) => c.redirect('/connect/index.html'))
 app.use('/connect/*', serveStatic({ root: './public' }))
 
 // ============================================================
-// Debug: docker socket diagnostics
+// Debug: test webhook without signature (dev/staging only)
+// POST /debug/webhook — same as /webhooks/plane but skips HMAC check
+// ============================================================
+
+app.post('/debug/webhook', async (c) => {
+  const rawBody = await c.req.text()
+  let payload: PlaneWebhookPayload
+  try {
+    payload = JSON.parse(rawBody)
+  } catch {
+    return c.json({ error: 'invalid JSON' }, 400)
+  }
+  console.log(`[debug-webhook] ${payload.event}.${payload.action}`)
+
+  if (payload.event === 'comment' && payload.action === 'created') {
+    const comment = (payload as unknown as PlaneCommentPayload).data
+    const text = (comment.comment_stripped ?? '').toLowerCase()
+    if (!text.includes('@claude')) {
+      return c.json({ skipped: true, reason: 'no @claude mention' })
+    }
+    if (!plane) return c.json({ error: 'not initialized' }, 503)
+
+    try {
+      const issueDetails = await plane.getIssue(comment.workspace, comment.project, comment.issue_id)
+      const repoUrl = await getRepoForProject(comment.project, comment.workspace)
+      const secrets = {
+        GITHUB_TOKEN: await getSetting('GITHUB_TOKEN', comment.workspace) || process.env.GITHUB_TOKEN || '',
+        CLAUDE_CODE_OAUTH_TOKEN: await getSetting('CLAUDE_CODE_OAUTH_TOKEN', comment.workspace) || process.env.CLAUDE_CODE_OAUTH_TOKEN || '',
+        ANTHROPIC_API_KEY: await getSetting('ANTHROPIC_API_KEY', comment.workspace) || process.env.ANTHROPIC_API_KEY || '',
+        PLANE_API_URL: process.env.PLANE_API_URL ?? '',
+        PLANE_API_TOKEN: process.env.PLANE_API_TOKEN ?? '',
+        REPO_URL: repoUrl,
+      }
+      const { runCommentAgent, runAutonomousAgent, isActionRequest } = await import('./agent-runner.js')
+      const userQuestion = (comment.comment_stripped ?? '').replace(/@claude\b/i, '').trim()
+      const autonomous = isActionRequest(userQuestion)
+      if (autonomous) {
+        runAutonomousAgent(comment, issueDetails, secrets, plane).catch((err: Error) =>
+          console.error('[debug-autonomous] error:', err)
+        )
+      } else {
+        runCommentAgent(comment, issueDetails, secrets, plane).catch((err: Error) =>
+          console.error('[debug-comment] error:', err)
+        )
+      }
+      return c.json({ dispatched: true, mode: autonomous ? 'autonomous' : 'comment', issue: issueDetails.name })
+    } catch (err) {
+      return c.json({ error: String(err) }, 500)
+    }
+  }
+  return c.json({ skipped: true, reason: 'not a comment.created event' })
+})
+
+// ============================================================
+// Debug: docker socket diagnostics + claude CLI check
 // ============================================================
 
 app.get('/debug/docker', async (c) => {
@@ -104,7 +158,13 @@ app.get('/debug/docker', async (c) => {
   }
   let ls = ''
   try { ls = execSync('ls -la /var/run/ /run/ 2>&1 | head -20').toString() } catch {}
-  return c.json({ socketPaths: check, ls })
+
+  let claudeVersion = ''
+  let claudePath = ''
+  try { claudeVersion = execSync('claude --version 2>&1').toString().trim() } catch { claudeVersion = 'NOT FOUND' }
+  try { claudePath = execSync('which claude 2>&1').toString().trim() } catch { claudePath = 'NOT FOUND' }
+
+  return c.json({ socketPaths: check, ls, claudeVersion, claudePath })
 })
 
 // ============================================================
