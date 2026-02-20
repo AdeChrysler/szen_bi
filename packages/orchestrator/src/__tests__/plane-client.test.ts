@@ -65,4 +65,23 @@ describe('PlaneClient', () => {
     const stateId = await client.resolveStateByGroup('ws', 'proj-1', 'started')
     expect(stateId).toBe('s2')
   })
+
+  it('fetches issue comments', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        results: [
+          { id: 'c1', comment_stripped: 'First comment', actor_detail: { display_name: 'Alice' }, created_at: '2026-01-01' },
+          { id: 'c2', comment_stripped: '@claude fix the bug', actor_detail: { display_name: 'Bob' }, created_at: '2026-01-02' },
+        ],
+      }),
+    })
+    const comments = await client.getComments('ws', 'proj-1', 'issue-1')
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://plane-api:8000/api/v1/workspaces/ws/projects/proj-1/issues/issue-1/comments/',
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-API-Key': 'test-token' }) })
+    )
+    expect(comments).toHaveLength(2)
+    expect(comments[0].comment_stripped).toBe('First comment')
+  })
 })
