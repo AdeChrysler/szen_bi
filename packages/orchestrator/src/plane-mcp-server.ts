@@ -325,6 +325,9 @@ server.registerTool(
     if (title) body.name = title
     if (description) body.description_html = `<p>${description}</p>`
     if (priority) body.priority = priority
+    if (Object.keys(body).length === 0) {
+      throw new Error('update_issue: at least one of title, description, or priority must be provided')
+    }
     await planePatch(
       `/api/v1/workspaces/${workspace}/projects/${project_id}/issues/${issue_id}/`,
       body
