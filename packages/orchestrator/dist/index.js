@@ -72,6 +72,7 @@ function verifyWebhookSignature(body, signature) {
     if (!signature)
         return false;
     const expected = createHmac('sha256', webhookSecret).update(body).digest('hex');
+    console.log(`[sig] received(${signature.length}): ${signature.slice(0, 16)}... expected(${expected.length}): ${expected.slice(0, 16)}...`);
     try {
         return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
     }
