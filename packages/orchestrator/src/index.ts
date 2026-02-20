@@ -495,6 +495,19 @@ app.post('/webhooks/plane', async (c) => {
     PLANE_API_TOKEN: process.env.PLANE_API_TOKEN ?? '',
     REPO_URL: repoUrl,
   }
+  // Try Docker first; fall back to inline Anthropic API if socket unavailable
+  const { existsSync: fsExistsSync } = await import('fs')
+  const dockerAvailable = fsExistsSync('/var/run/docker.sock') || fsExistsSync('/run/docker.sock')
+
+  if (!dockerAvailable) {
+    console.log(`[dispatch] Docker unavailable — running ${agentConfig.name} inline via Anthropic API`)
+    const { runInlineAgent } = await import('./agent-runner.js')
+    runInlineAgent(task, secrets, plane!).catch(err =>
+      console.error(`[agent] Inline agent error:`, err)
+    )
+    return c.json({ dispatched: true, taskId: task.id, mode: 'inline' })
+  }
+
   const containerId = await containers.runAgent(agentConfig, task, secrets)
   console.log(`[dispatch] Agent ${agentConfig.name} started: ${containerId}`)
 
