@@ -107,7 +107,10 @@ app.post('/debug/webhook', async (c) => {
 
   if (payload.event === 'comment' && payload.action === 'created') {
     const comment = (payload as unknown as PlaneCommentPayload).data
-    const text = (comment.comment_stripped ?? '').toLowerCase()
+    // Plane often sends empty comment_stripped with content only in comment_html — check both
+    const rawHtml = comment.comment_html ?? ''
+    const stripped = comment.comment_stripped ?? rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    const text = stripped.toLowerCase()
     if (!text.includes('@claude')) {
       return c.json({ skipped: true, reason: 'no @claude mention' })
     }
@@ -125,7 +128,7 @@ app.post('/debug/webhook', async (c) => {
         REPO_URL: repoUrl,
       }
       const { runCommentAgent, runAutonomousAgent, isActionRequest } = await import('./agent-runner.js')
-      const userQuestion = (comment.comment_stripped ?? '').replace(/@claude\b/i, '').trim()
+      const userQuestion = stripped.replace(/@claude\b/i, '').trim()
       const autonomous = isActionRequest(userQuestion)
       if (autonomous) {
         runAutonomousAgent(comment, issueDetails, secrets, plane).catch((err: Error) =>
@@ -518,7 +521,12 @@ app.post('/webhooks/plane', async (c) => {
   // ── Comment event: check for @claude mention ───────────────────────────────
   if (payload.event === 'comment' && payload.action === 'created') {
     const comment = (payload as unknown as PlaneCommentPayload).data
-    const text = (comment.comment_stripped ?? '').toLowerCase()
+    // Plane often sends empty comment_stripped — fall back to stripping comment_html
+    const rawHtml = comment.comment_html ?? ''
+    const stripped = comment.comment_stripped?.trim()
+      || rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    const text = stripped.toLowerCase()
+    console.log(`[webhook] comment text: "${text.slice(0, 100)}"`)
     if (!text.includes('@claude')) {
       return c.json({ skipped: true, reason: 'no @claude mention' })
     }
@@ -538,7 +546,7 @@ app.post('/webhooks/plane', async (c) => {
       }
 
       const { runCommentAgent, runAutonomousAgent, isActionRequest } = await import('./agent-runner.js')
-      const userQuestion = (comment.comment_stripped ?? '').replace(/@claude\b/i, '').trim()
+      const userQuestion = stripped.replace(/@claude\b/i, '').trim()
       const autonomous = isActionRequest(userQuestion)
 
       if (autonomous) {

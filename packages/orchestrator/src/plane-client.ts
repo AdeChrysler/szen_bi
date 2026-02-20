@@ -108,6 +108,7 @@ export class PlaneClient {
           url,
           is_active: true,
           issue: true,
+          comment: true,
           secret,
         }),
       }
