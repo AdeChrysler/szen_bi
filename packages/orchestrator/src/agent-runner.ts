@@ -7,10 +7,18 @@ export async function runInlineAgent(
   secrets: Record<string, string>,
   plane: PlaneClient
 ): Promise<void> {
-  const apiKey = secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_API_KEY
-  if (!apiKey) throw new Error('No Anthropic API key available')
+  const oauthToken = secrets.CLAUDE_CODE_OAUTH_TOKEN
+  const apiKey = secrets.ANTHROPIC_API_KEY
 
-  const client = new Anthropic({ apiKey })
+  if (!oauthToken && !apiKey) throw new Error('No Anthropic API key available')
+
+  // OAuth tokens (sk-ant-oat01-) use Authorization: Bearer, not x-api-key
+  const client = oauthToken
+    ? new Anthropic({
+        apiKey: 'placeholder',
+        defaultHeaders: { 'Authorization': `Bearer ${oauthToken}`, 'x-api-key': '' },
+      })
+    : new Anthropic({ apiKey })
 
   const issueDetails = [
     `Title: ${task.payload.name}`,
