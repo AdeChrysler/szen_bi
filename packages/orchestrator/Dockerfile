@@ -8,7 +8,7 @@ COPY --from=cloner /repo/packages/orchestrator/package.json ./
 RUN npm install
 COPY --from=cloner /repo/packages/orchestrator/tsconfig.json ./
 COPY --from=cloner /repo/packages/orchestrator/src/ ./src/
-RUN npx tsc
+RUN npm run build
 
 FROM node:22-slim
 WORKDIR /app
