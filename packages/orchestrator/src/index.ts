@@ -622,6 +622,23 @@ app.post('/webhooks/plane', async (c) => {
 
 export default app
 
+// Ensure claude CLI is available at startup (install if missing)
+{
+  const { execSync, spawnSync } = await import('child_process')
+  const check = spawnSync('claude', ['--version'], { stdio: 'ignore' })
+  if (check.error || check.status !== 0) {
+    console.log('[startup] claude CLI not found — installing @anthropic-ai/claude-code globally...')
+    try {
+      execSync('npm install -g @anthropic-ai/claude-code', { stdio: 'inherit' })
+      console.log('[startup] claude CLI installed successfully')
+    } catch (e) {
+      console.error('[startup] WARNING: failed to install claude CLI:', e)
+    }
+  } else {
+    console.log('[startup] claude CLI found:', spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout?.trim())
+  }
+}
+
 // Server startup when run directly
 const isMainModule = !process.argv[1] || process.argv[1].includes('index')
 if (isMainModule && process.env.NODE_ENV !== 'test') {
