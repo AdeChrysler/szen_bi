@@ -43,3 +43,17 @@ export interface RunningAgent {
   issueId: string
   startedAt: string
 }
+
+export interface PlaneCommentPayload {
+  event: 'comment'
+  action: 'created' | 'updated' | 'deleted'
+  data: {
+    id: string
+    issue_id: string
+    project: string
+    workspace: string
+    comment_stripped: string   // plain text — contains "@claude ..."
+    comment_html: string
+    actor_detail?: { id: string; display_name: string }
+  }
+}
