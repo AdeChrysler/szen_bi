@@ -91,6 +91,23 @@ app.get('/connect', (c) => c.redirect('/connect/index.html'))
 app.use('/connect/*', serveStatic({ root: './public' }))
 
 // ============================================================
+// Debug: docker socket diagnostics
+// ============================================================
+
+app.get('/debug/docker', async (c) => {
+  const { existsSync } = await import('fs')
+  const { execSync } = await import('child_process')
+  const paths = ['/var/run/docker.sock', '/run/docker.sock']
+  const check: Record<string, any> = {}
+  for (const p of paths) {
+    check[p] = existsSync(p)
+  }
+  let ls = ''
+  try { ls = execSync('ls -la /var/run/ /run/ 2>&1 | head -20').toString() } catch {}
+  return c.json({ socketPaths: check, ls })
+})
+
+// ============================================================
 // Proxy: validate Plane credentials (avoids browser CORS)
 // ============================================================
 
@@ -496,7 +513,12 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
 
   const port = parseInt(process.env.PORT || '4000')
   const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379')
-  const docker = new Dockerode()
+  const { existsSync } = await import('fs')
+  const socketPath = process.env.DOCKER_SOCKET ||
+    (existsSync('/var/run/docker.sock') ? '/var/run/docker.sock' :
+     existsSync('/run/docker.sock') ? '/run/docker.sock' : '/var/run/docker.sock')
+  console.log(`[docker] Using socket: ${socketPath} (exists: ${existsSync(socketPath)})`)
+  const docker = new Dockerode({ socketPath })
   const agents = loadAgentConfigs(process.env.AGENTS_CONFIG || './config/agents.yaml')
   const planeClient = new PlaneClient(
     process.env.PLANE_API_URL || 'http://localhost:8000',
