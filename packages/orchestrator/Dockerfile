@@ -5,7 +5,7 @@ RUN git clone https://github.com/AdeChrysler/szen_bi.git .
 FROM node:22-slim AS builder
 WORKDIR /app
 COPY --from=cloner /repo/packages/orchestrator/package.json ./
-RUN npm install
+RUN npm install --include=dev
 COPY --from=cloner /repo/packages/orchestrator/tsconfig.json ./
 COPY --from=cloner /repo/packages/orchestrator/src/ ./src/
 RUN ./node_modules/.bin/tsc
