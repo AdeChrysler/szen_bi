@@ -19,6 +19,9 @@ RUN npm install --production
 
 COPY --from=builder /app/dist/ ./dist/
 
+# Config needed at startup
+COPY config/ ./config/
+
 # Connect wizard — pre-built by `npm run build:connect` before docker build
 COPY public/ ./public/
 
