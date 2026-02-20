@@ -106,7 +106,7 @@ app.post('/debug/webhook', async (c) => {
   }
   console.log(`[debug-webhook] ${payload.event}.${payload.action}`)
 
-  if (payload.event === 'comment' && payload.action === 'created') {
+  if ((payload.event === 'comment' || payload.event === 'issue_comment') && payload.action === 'created') {
     const comment = (payload as unknown as PlaneCommentPayload).data
     // Plane often sends empty comment_stripped with content only in comment_html — check both
     const rawHtml = comment.comment_html ?? ''
@@ -522,7 +522,7 @@ app.post('/webhooks/plane', async (c) => {
   console.log(`[webhook] ${payload.event}.${payload.action}`)
 
   // ── Comment event: check for @claude mention ───────────────────────────────
-  if (payload.event === 'comment' && payload.action === 'created') {
+  if ((payload.event === 'comment' || payload.event === 'issue_comment') && payload.action === 'created') {
     const comment = (payload as unknown as PlaneCommentPayload).data
     // Plane often sends empty comment_stripped — fall back to stripping comment_html
     const rawHtml = comment.comment_html ?? ''
