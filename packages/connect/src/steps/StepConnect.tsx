@@ -15,10 +15,13 @@ export default function StepConnect({ state, merge, onNext }: Props) {
     setError('')
     setLoading(true)
     try {
-      const res = await fetch(`${state.planeUrl}/api/v1/workspaces/${state.workspaceSlug}/members/`, {
-        headers: { 'X-API-Key': state.apiToken },
+      const res = await fetch('/api/validate-plane', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planeUrl: state.planeUrl, apiToken: state.apiToken, workspaceSlug: state.workspaceSlug }),
       })
-      if (!res.ok) throw new Error(`Plane returned ${res.status} — check URL and token`)
+      const data = await res.json()
+      if (!data.ok) throw new Error(data.error || `Plane returned ${res.status} — check URL and token`)
       onNext()
     } catch (e: any) {
       setError(e.message)

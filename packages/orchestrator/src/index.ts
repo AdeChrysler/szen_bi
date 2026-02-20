@@ -91,6 +91,26 @@ app.get('/connect', (c) => c.redirect('/connect/index.html'))
 app.use('/connect/*', serveStatic({ root: './public' }))
 
 // ============================================================
+// Proxy: validate Plane credentials (avoids browser CORS)
+// ============================================================
+
+app.post('/api/validate-plane', async (c) => {
+  try {
+    const { planeUrl, apiToken, workspaceSlug } = await c.req.json()
+    if (!planeUrl || !apiToken || !workspaceSlug) {
+      return c.json({ ok: false, error: 'planeUrl, apiToken, workspaceSlug required' }, 400)
+    }
+    const res = await fetch(`${planeUrl}/api/v1/workspaces/${workspaceSlug}/members/`, {
+      headers: { 'X-API-Key': apiToken },
+    })
+    if (!res.ok) return c.json({ ok: false, error: `Plane returned ${res.status}` }, 400)
+    return c.json({ ok: true })
+  } catch (err) {
+    return c.json({ ok: false, error: String(err) }, 400)
+  }
+})
+
+// ============================================================
 // Health & Status
 // ============================================================
 
