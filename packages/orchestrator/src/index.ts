@@ -109,8 +109,10 @@ app.post('/debug/webhook', async (c) => {
     const comment = (payload as unknown as PlaneCommentPayload).data
     // Plane often sends empty comment_stripped with content only in comment_html — check both
     const rawHtml = comment.comment_html ?? ''
-    const stripped = comment.comment_stripped ?? rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    const stripped = comment.comment_stripped?.trim()
+      || rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
     const text = stripped.toLowerCase()
+    console.log(`[debug-webhook] comment text: "${text.slice(0, 100)}"`)
     if (!text.includes('@claude')) {
       return c.json({ skipped: true, reason: 'no @claude mention' })
     }
