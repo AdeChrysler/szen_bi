@@ -17,12 +17,12 @@ export class AgentRouter {
     return this.byLabel.get(labelName.toLowerCase())
   }
 
-  resolve(issue: { assignees: string[]; labels: Array<{ id: string; name: string }> }): AgentConfig | undefined {
-    for (const assigneeId of issue.assignees) {
+  resolve(issue: { assignees?: string[]; labels?: Array<{ id: string; name: string }> }): AgentConfig | undefined {
+    for (const assigneeId of issue.assignees ?? []) {
       const config = this.routeByAssignee(assigneeId)
       if (config) return config
     }
-    for (const label of issue.labels) {
+    for (const label of issue.labels ?? []) {
       const config = this.routeByLabel(label.name)
       if (config) return config
     }
