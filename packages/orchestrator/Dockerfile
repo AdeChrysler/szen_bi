@@ -14,9 +14,11 @@ FROM node:22-slim
 WORKDIR /app
 COPY --from=cloner /repo/packages/orchestrator/package.json ./
 RUN npm install --omit=dev
+# Install Claude Code CLI so the comment/autonomous agents can spawn it
+RUN npm install -g @anthropic-ai/claude-code
 COPY --from=builder /app/dist/ ./dist/
 COPY --from=cloner /repo/packages/orchestrator/config ./config
 COPY --from=cloner /repo/packages/orchestrator/public ./public
 
-EXPOSE 80
+EXPOSE 4000
 CMD ["node", "dist/index.js"]
