@@ -7,7 +7,7 @@ import { PlaneClient } from './plane-client.js'
 import type { QueuedTask, PlaneCommentPayload } from './types.js'
 
 const ACTION_VERB_PATTERN =
-  /\b(implement|fix|build|create|write|refactor|add|update|test|review|investigate|debug|work\s+on|deploy|setup|set\s+up|configure|migrate|optimize)\b/i
+  /^(please\s+)?(can\s+you\s+|could\s+you\s+)?(implement|fix|build|create|write|refactor|add|update|test|review|investigate|debug|work\s+on|deploy|setup|set\s+up|configure|migrate|optimize)(?!\s+(me|my|us|our|your|their)\b)\b/i
 
 export function isActionRequest(text: string): boolean {
   return ACTION_VERB_PATTERN.test(text)
@@ -66,10 +66,12 @@ ${issueDetails}`
   )
 }
 
-async function runWithClaudeCLI(oauthToken: string, prompt: string): Promise<string> {
+async function runWithClaudeCLI(oauthToken: string, prompt: string, mcpConfigPath?: string): Promise<string> {
   return new Promise((resolve, reject) => {
+    const claudeArgs: string[] = ['--print']
+    if (mcpConfigPath) claudeArgs.push('--mcp-config', mcpConfigPath)
     // CLAUDE_CODE_OAUTH_TOKEN env var overrides credentials file — no file writing needed
-    const proc = spawn('claude', ['--print'], {
+    const proc = spawn('claude', claudeArgs, {
       env: {
         ...process.env,
         CLAUDE_CODE_OAUTH_TOKEN: oauthToken,
@@ -176,10 +178,11 @@ Use tools when you need to reference other tasks. Keep your response focused and
       },
     },
   }
-  await writeFile(join(mcpDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2), 'utf-8')
+  const mcpConfigFile = `mcp-${commentData.issue_id.slice(0, 8)}.json`
+  await writeFile(join(mcpDir, mcpConfigFile), JSON.stringify(mcpConfig, null, 2), 'utf-8')
 
   console.log('[comment-agent] Using Claude Code CLI with Plane MCP server')
-  const response = await runWithClaudeCLI(oauthToken, prompt)
+  const response = await runWithClaudeCLI(oauthToken, prompt, join(mcpDir, mcpConfigFile))
 
   const actor = commentData.actor_detail?.display_name ?? 'User'
   await plane.addComment(
@@ -244,7 +247,8 @@ export async function runAutonomousAgent(
       },
     },
   }
-  await writeFile(join(mcpDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2), 'utf-8')
+  const mcpConfigFile = `mcp-${commentData.issue_id.slice(0, 8)}.json`
+  await writeFile(join(mcpDir, mcpConfigFile), JSON.stringify(mcpConfig, null, 2), 'utf-8')
 
   // 5. Build rich system prompt
   const repoUrl = secrets.REPO_URL ?? ''
@@ -322,7 +326,15 @@ IMPORTANT: Use the Plane MCP tools proactively — post progress, create subtask
   console.log('[autonomous-agent] Using Claude Code CLI with Plane MCP')
   let response: string
   try {
-    response = await runWithClaudeAutonomous(oauthToken, prompt, workDir)
+    response = await runWithClaudeAutonomous(
+      oauthToken,
+      prompt,
+      workDir,
+      {
+        ...(secrets.GITHUB_TOKEN ? { GITHUB_TOKEN: secrets.GITHUB_TOKEN } : {}),
+      },
+      join(mcpDir, mcpConfigFile)
+    )
   } catch (err) {
     await plane.addComment(
       commentData.workspace,
@@ -345,16 +357,21 @@ IMPORTANT: Use the Plane MCP tools proactively — post progress, create subtask
 async function runWithClaudeAutonomous(
   oauthToken: string,
   prompt: string,
-  workDir: string
+  workDir: string,
+  extraEnv: Record<string, string> = {},
+  mcpConfigPath?: string
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    const claudeArgs = ['--print', '--dangerously-skip-permissions']
+    if (mcpConfigPath) claudeArgs.push('--mcp-config', mcpConfigPath)
     const proc = spawn(
       'claude',
-      ['--print', '--dangerously-skip-permissions'],
+      claudeArgs,
       {
         cwd: workDir,
         env: {
           ...process.env,
+          ...extraEnv,
           CLAUDE_CODE_OAUTH_TOKEN: oauthToken,
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
           NO_COLOR: '1',
