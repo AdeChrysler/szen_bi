@@ -24,6 +24,22 @@ export class PlaneClient {
     return res.json()
   }
 
+  async getComments(workspaceSlug: string, projectId: string, issueId: string): Promise<Array<{
+    id: string
+    comment_stripped: string
+    comment_html: string
+    actor_detail?: { id: string; display_name: string }
+    created_at: string
+  }>> {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/comments/`),
+      { headers: this.headers() }
+    )
+    if (!res.ok) throw new Error(`Failed to get comments: ${res.status}`)
+    const data = await res.json()
+    return data.results ?? data
+  }
+
   async updateIssueState(workspaceSlug: string, projectId: string, issueId: string, stateId: string) {
     const res = await fetch(
       this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/`),

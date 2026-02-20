@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { randomUUID, createHmac, timingSafeEqual } from 'crypto'
-import type { PlaneWebhookPayload, QueuedTask } from './types.js'
+import type { PlaneWebhookPayload, PlaneCommentPayload, QueuedTask } from './types.js'
 import { Dispatcher } from './config.js'
 import { TaskQueue } from './queue.js'
 import { ContainerManager } from './docker.js'
@@ -454,6 +454,52 @@ app.post('/webhooks/plane', async (c) => {
 
   const payload: PlaneWebhookPayload = JSON.parse(rawBody)
   console.log(`[webhook] ${payload.event}.${payload.action}`)
+
+  // ── Comment event: check for @claude mention ───────────────────────────────
+  if (payload.event === 'comment' && payload.action === 'created') {
+    const comment = (payload as unknown as PlaneCommentPayload).data
+    const text = (comment.comment_stripped ?? '').toLowerCase()
+    if (!text.includes('@claude')) {
+      return c.json({ skipped: true, reason: 'no @claude mention' })
+    }
+
+    if (!plane) return c.json({ error: 'not initialized' }, 503)
+
+    try {
+      const issueDetails = await plane.getIssue(comment.workspace, comment.project, comment.issue_id)
+      const repoUrl = await getRepoForProject(comment.project, comment.workspace)
+      const secrets = {
+        GITHUB_TOKEN: await getSetting('GITHUB_TOKEN', comment.workspace) || process.env.GITHUB_TOKEN || '',
+        CLAUDE_CODE_OAUTH_TOKEN: await getSetting('CLAUDE_CODE_OAUTH_TOKEN', comment.workspace) || process.env.CLAUDE_CODE_OAUTH_TOKEN || '',
+        ANTHROPIC_API_KEY: await getSetting('ANTHROPIC_API_KEY', comment.workspace) || process.env.ANTHROPIC_API_KEY || '',
+        PLANE_API_URL: process.env.PLANE_API_URL ?? '',
+        PLANE_API_TOKEN: process.env.PLANE_API_TOKEN ?? '',
+        REPO_URL: repoUrl,
+      }
+
+      const { runCommentAgent, runAutonomousAgent, isActionRequest } = await import('./agent-runner.js')
+      const userQuestion = (comment.comment_stripped ?? '').replace(/@claude\b/i, '').trim()
+      const autonomous = isActionRequest(userQuestion)
+
+      if (autonomous) {
+        console.log('[webhook] @claude → autonomous mode')
+        runAutonomousAgent(comment, issueDetails, secrets, plane).catch((err: Error) =>
+          console.error('[autonomous-agent] error:', err)
+        )
+      } else {
+        console.log('[webhook] @claude → Q&A mode')
+        runCommentAgent(comment, issueDetails, secrets, plane).catch((err: Error) =>
+          console.error('[comment-agent] error:', err)
+        )
+      }
+      return c.json({ dispatched: true, mode: autonomous ? 'autonomous' : 'comment' })
+    } catch (err) {
+      console.error('[comment-agent] setup error:', err)
+      return c.json({ error: String(err) }, 500)
+    }
+  }
+  // ── End comment handler ────────────────────────────────────────────────────
+
   if (!dispatcher || !queue || !containers) return c.json({ error: 'not initialized' }, 503)
 
   const match = dispatcher.shouldDispatch(payload)
