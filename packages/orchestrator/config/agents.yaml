@@ -1,4 +1,12 @@
 agents:
+  - name: claude
+    assigneeId: ""
+    dockerImage: zenova-dev-agent:latest
+    tools: []
+    timeout: 3600
+    maxConcurrency: 3
+    promptFile: ""
+
   - name: dev
     assigneeId: ""
     dockerImage: zenova-dev-agent:latest
