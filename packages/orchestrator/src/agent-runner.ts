@@ -1,7 +1,4 @@
-import { spawn, execSync } from 'child_process'
-import { mkdirSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
+import { spawn } from 'child_process'
 import Anthropic from '@anthropic-ai/sdk'
 import { PlaneClient } from './plane-client.js'
 import type { QueuedTask } from './types.js'
@@ -44,7 +41,7 @@ ${issueDetails}`
   let response: string
 
   if (oauthToken) {
-    console.log('[agent] Using Claude Code CLI with OAuth token')
+    console.log('[agent] Using Claude Code CLI (OAuth)')
     response = await runWithClaudeCLI(oauthToken, prompt)
   } else {
     console.log('[agent] Using Anthropic API key')
@@ -60,49 +57,38 @@ ${issueDetails}`
 }
 
 async function runWithClaudeCLI(oauthToken: string, prompt: string): Promise<string> {
-  // Write OAuth credentials so Claude Code CLI can authenticate via claude.ai
-  const claudeDir = join(homedir(), '.claude')
-  mkdirSync(claudeDir, { recursive: true, mode: 0o700 })
-  const credPath = join(claudeDir, '.credentials.json')
-  writeFileSync(
-    credPath,
-    JSON.stringify({
-      claudeAiOauth: {
-        accessToken: oauthToken,
-        tokenType: 'Bearer',
-        expiresAt: Date.now() + 3600_000 * 24 * 30,
-        scopes: ['user:inference'],
-        subscriptionType: 'pro',
-      },
-    }),
-    { encoding: 'utf-8', mode: 0o600 }
-  )
-  console.log('[agent] Credentials written:', credPath)
-
   return new Promise((resolve, reject) => {
-    const proc = spawn('claude', ['--print', '--dangerously-skip-permissions', prompt], {
+    // CLAUDE_CODE_OAUTH_TOKEN env var overrides credentials file — no file writing needed
+    const proc = spawn('claude', ['--print'], {
       env: {
         ...process.env,
-        HOME: homedir(),
+        CLAUDE_CODE_OAUTH_TOKEN: oauthToken,
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        CLAUDE_TELEMETRY_DISABLED: '1',
+        NO_COLOR: '1',
       },
-      timeout: 120_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 110_000,
     })
+
+    // Write prompt to stdin and close it
+    proc.stdin.write(prompt, 'utf-8')
+    proc.stdin.end()
 
     let stdout = ''
     let stderr = ''
     proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    proc.on('close', (code) => {
-      console.log(`[agent] claude exited ${code}, stdout=${stdout.length}b stderr=${stderr.length}b`)
-      if (stderr) console.log('[agent] stderr:', stderr.slice(0, 500))
+
+    proc.on('close', (code, signal) => {
+      console.log(`[agent] claude exited code=${code} signal=${signal} stdout=${stdout.length}b stderr=${stderr.length}b`)
+      if (stderr.trim()) console.log('[agent] stderr:', stderr.slice(0, 500))
       if (code === 0 && stdout.trim()) {
         resolve(stdout.trim())
       } else {
-        reject(new Error(`claude CLI exited ${code}. ${stderr.slice(0, 300) || 'No output'}`))
+        reject(new Error(`claude exited ${code ?? signal}. stderr: ${stderr.slice(0, 300) || 'none'}`))
       }
     })
+
     proc.on('error', (err) => reject(new Error(`spawn claude: ${err.message}`)))
   })
 }
