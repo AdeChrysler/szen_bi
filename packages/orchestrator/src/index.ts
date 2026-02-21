@@ -908,6 +908,59 @@ app.post('/admin/api/settings/:workspace', async (c) => {
 })
 
 // ============================================================
+// Admin: Bot User Provisioning
+// ============================================================
+
+app.post('/admin/api/create-bot', async (c) => {
+  try {
+    const { execSync } = await import('child_process')
+
+    // Find the plane-api container
+    const containers_out = execSync(
+      'docker ps --format "{{.Names}}" | grep -E "^api-" | head -1',
+      { encoding: 'utf-8', timeout: 10000 }
+    ).trim()
+
+    if (!containers_out) {
+      return c.json({ error: 'plane-api container not found' }, 404)
+    }
+
+    // Read the bot creation script
+    const scriptPath = resolve(__dirname, '..', '..', '..', 'scripts', 'create-bot-user.py')
+    let script: string
+    try {
+      script = readFileSync(scriptPath, 'utf-8')
+    } catch {
+      // Script might not be in the container at that path, embed it inline
+      script = readFileSync(resolve(__dirname, '..', 'scripts', 'create-bot-user.py'), 'utf-8')
+    }
+
+    // Execute via docker exec, piping the script into django shell
+    const result = execSync(
+      `docker exec -i ${containers_out} python manage.py shell`,
+      { input: script, encoding: 'utf-8', timeout: 30000, maxBuffer: 1024 * 1024 }
+    )
+
+    // Parse the output to find the API token
+    const tokenMatch = result.match(/API token\s*:\s*(\S+)/)
+    const token = tokenMatch ? tokenMatch[1] : null
+
+    return c.json({
+      success: true,
+      output: result,
+      botApiToken: token,
+    })
+  } catch (err: any) {
+    return c.json({
+      error: 'Bot creation failed',
+      details: err.message,
+      stdout: err.stdout,
+      stderr: err.stderr,
+    }, 500)
+  }
+})
+
+// ============================================================
 // Webhook Handler
 // ============================================================
 
