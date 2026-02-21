@@ -10,9 +10,9 @@ RUN git clone --depth=1 https://github.com/makeplane/plane.git . \
     && git fetch --depth=50 origin preview \
     && git checkout ${PLANE_COMMIT} 2>/dev/null || true
 
-# Apply ZenithSpace customizations
-COPY zenithspace.patch /tmp/zenithspace.patch
-RUN apk add --no-cache patch \
+# Apply ZenithSpace customizations (fetch patch from GitHub)
+RUN apk add --no-cache patch curl \
+    && curl -fsSL https://raw.githubusercontent.com/AdeChrysler/szen_bi/master/coolify/zenithspace.patch -o /tmp/zenithspace.patch \
     && cd /repo \
     && git apply /tmp/zenithspace.patch
 
@@ -34,12 +34,12 @@ RUN turbo prune --scope=web --docker
 FROM base AS installer
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
-COPY .gitignore .gitignore
+COPY --from=cloner /repo/.gitignore .gitignore
 COPY --from=builder /app/out/json/ .
 COPY --from=builder /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
 RUN corepack enable pnpm
 COPY --from=builder /app/out/full/ .
-COPY turbo.json turbo.json
+COPY --from=cloner /repo/turbo.json turbo.json
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm fetch --store-dir=/pnpm/store
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store CI=true pnpm install --offline --frozen-lockfile --store-dir=/pnpm/store
 
@@ -64,7 +64,7 @@ ENV TURBO_TELEMETRY_DISABLED=1
 RUN pnpm turbo run build --filter=web
 
 FROM nginx:1.27-alpine AS production
-COPY apps/web/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY --from=cloner /repo/apps/web/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY --from=installer /app/apps/web/build/client /usr/share/nginx/html
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
