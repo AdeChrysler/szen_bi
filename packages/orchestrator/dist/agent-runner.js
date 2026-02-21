@@ -51,7 +51,7 @@ export async function runAgent(opts) {
 async function runWithStreaming(oauthToken, prompt, mcpConfigPath, mode, reporter, actor, commentData, secrets) {
     const isAutonomous = mode === 'autonomous';
     let workDir;
-    const claudeArgs = ['--print', '--output-format', 'stream-json'];
+    const claudeArgs = ['--print', '--verbose', '--output-format', 'stream-json'];
     if (mcpConfigPath)
         claudeArgs.push('--mcp-config', mcpConfigPath);
     if (isAutonomous) {

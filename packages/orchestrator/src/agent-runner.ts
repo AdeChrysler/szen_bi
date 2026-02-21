@@ -96,7 +96,7 @@ async function runWithStreaming(
   const isAutonomous = mode === 'autonomous'
   let workDir: string | undefined
 
-  const claudeArgs = ['--print', '--output-format', 'stream-json']
+  const claudeArgs = ['--print', '--verbose', '--output-format', 'stream-json']
   if (mcpConfigPath) claudeArgs.push('--mcp-config', mcpConfigPath)
 
   if (isAutonomous) {
