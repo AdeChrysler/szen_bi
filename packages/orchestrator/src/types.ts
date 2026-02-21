@@ -55,5 +55,55 @@ export interface PlaneCommentPayload {
     comment_stripped: string   // plain text — contains "@claude ..."
     comment_html: string
     actor_detail?: { id: string; display_name: string }
+    external_source?: string
+    external_id?: string
   }
+}
+
+// ─── Agent Session Types ────────────────────────────────────────────────────
+
+export type SessionState = 'pending' | 'active' | 'awaiting_input' | 'error' | 'complete'
+
+export type ActivityType = 'thought' | 'tool_start' | 'tool_result' | 'text' | 'error' | 'system'
+
+export interface AgentActivity {
+  type: ActivityType
+  label: string        // human-readable (e.g. "Reading files", "Searching codebase")
+  timestamp: number
+  detail?: string      // tool name, file path, etc.
+  completed?: boolean
+}
+
+export interface AgentSession {
+  id: string
+  issueId: string
+  projectId: string
+  workspaceSlug: string
+  state: SessionState
+  mode: 'comment' | 'autonomous'
+  triggeredBy: string         // actor display name
+  triggerCommentId: string
+  progressCommentId?: string  // Plane comment ID for in-place updates
+  activities: AgentActivity[]
+  finalResponse?: string
+  error?: string
+  createdAt: number
+  updatedAt: number
+  parentSessionId?: string    // for follow-up sessions
+}
+
+// ─── Claude CLI Stream Types ────────────────────────────────────────────────
+
+export interface StreamMessage {
+  type: 'assistant' | 'content_block_start' | 'content_block_delta' | 'content_block_stop' | 'message_start' | 'message_delta' | 'message_stop' | 'result' | 'system'
+  subtype?: string
+  [key: string]: any
+}
+
+export interface StreamContent {
+  type: 'text' | 'tool_use'
+  text?: string
+  id?: string
+  name?: string
+  input?: any
 }

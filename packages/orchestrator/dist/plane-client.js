@@ -37,14 +37,44 @@ export class PlaneClient {
             throw new Error(`Failed to update issue state: ${res.status}`);
         return res.json();
     }
-    async addComment(workspaceSlug, projectId, issueId, comment) {
+    async addComment(workspaceSlug, projectId, issueId, comment, opts) {
+        const body = { comment_html: `<p>${comment}</p>` };
+        if (opts?.external_source)
+            body.external_source = opts.external_source;
+        if (opts?.external_id)
+            body.external_id = opts.external_id;
         const res = await fetch(this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/comments/`), {
             method: 'POST',
             headers: this.headers(),
-            body: JSON.stringify({ comment_html: `<p>${comment}</p>` }),
+            body: JSON.stringify(body),
         });
         if (!res.ok)
             throw new Error(`Failed to add comment: ${res.status}`);
+        return res.json();
+    }
+    async addCommentHtml(workspaceSlug, projectId, issueId, html, opts) {
+        const body = { comment_html: html };
+        if (opts?.external_source)
+            body.external_source = opts.external_source;
+        if (opts?.external_id)
+            body.external_id = opts.external_id;
+        const res = await fetch(this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/comments/`), {
+            method: 'POST',
+            headers: this.headers(),
+            body: JSON.stringify(body),
+        });
+        if (!res.ok)
+            throw new Error(`Failed to add comment: ${res.status}`);
+        return res.json();
+    }
+    async updateComment(workspaceSlug, projectId, issueId, commentId, html) {
+        const res = await fetch(this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/comments/${commentId}/`), {
+            method: 'PATCH',
+            headers: this.headers(),
+            body: JSON.stringify({ comment_html: html }),
+        });
+        if (!res.ok)
+            throw new Error(`Failed to update comment: ${res.status}`);
         return res.json();
     }
     async addIssueLink(workspaceSlug, projectId, issueId, url, title) {

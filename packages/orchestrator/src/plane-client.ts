@@ -53,16 +53,66 @@ export class PlaneClient {
     return res.json()
   }
 
-  async addComment(workspaceSlug: string, projectId: string, issueId: string, comment: string) {
+  async addComment(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    comment: string,
+    opts?: { external_source?: string; external_id?: string }
+  ) {
+    const body: Record<string, string> = { comment_html: `<p>${comment}</p>` }
+    if (opts?.external_source) body.external_source = opts.external_source
+    if (opts?.external_id) body.external_id = opts.external_id
     const res = await fetch(
       this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/comments/`),
       {
         method: 'POST',
         headers: this.headers(),
-        body: JSON.stringify({ comment_html: `<p>${comment}</p>` }),
+        body: JSON.stringify(body),
       }
     )
     if (!res.ok) throw new Error(`Failed to add comment: ${res.status}`)
+    return res.json()
+  }
+
+  async addCommentHtml(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    html: string,
+    opts?: { external_source?: string; external_id?: string }
+  ) {
+    const body: Record<string, string> = { comment_html: html }
+    if (opts?.external_source) body.external_source = opts.external_source
+    if (opts?.external_id) body.external_id = opts.external_id
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/comments/`),
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(body),
+      }
+    )
+    if (!res.ok) throw new Error(`Failed to add comment: ${res.status}`)
+    return res.json()
+  }
+
+  async updateComment(
+    workspaceSlug: string,
+    projectId: string,
+    issueId: string,
+    commentId: string,
+    html: string
+  ) {
+    const res = await fetch(
+      this.url(`/api/v1/workspaces/${workspaceSlug}/projects/${projectId}/issues/${issueId}/comments/${commentId}/`),
+      {
+        method: 'PATCH',
+        headers: this.headers(),
+        body: JSON.stringify({ comment_html: html }),
+      }
+    )
+    if (!res.ok) throw new Error(`Failed to update comment: ${res.status}`)
     return res.json()
   }
 

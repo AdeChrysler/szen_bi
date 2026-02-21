@@ -4,6 +4,9 @@ import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import Anthropic from '@anthropic-ai/sdk'
 import { PlaneClient } from './plane-client.js'
+import { SessionManager } from './agent-session.js'
+import { ProgressReporter } from './progress-reporter.js'
+import { StreamParser } from './stream-parser.js'
 import type { QueuedTask, PlaneCommentPayload } from './types.js'
 
 const ACTION_VERB_PATTERN =
@@ -12,6 +15,342 @@ const ACTION_VERB_PATTERN =
 export function isActionRequest(text: string): boolean {
   return ACTION_VERB_PATTERN.test(text)
 }
+
+// ─── Unified agent entry point ──────────────────────────────────────────────
+
+export interface RunAgentOpts {
+  commentData: PlaneCommentPayload['data']
+  issueDetails: any
+  secrets: Record<string, string>
+  plane: PlaneClient
+  sessionManager: SessionManager
+  mode: 'comment' | 'autonomous'
+  followUpSessionId?: string   // parent session for follow-ups
+}
+
+export async function runAgent(opts: RunAgentOpts): Promise<void> {
+  const { commentData, issueDetails, secrets, plane, sessionManager, mode, followUpSessionId } = opts
+  const oauthToken = secrets.CLAUDE_CODE_OAUTH_TOKEN
+  const apiKey = secrets.ANTHROPIC_API_KEY
+  const actor = commentData.actor_detail?.display_name ?? 'User'
+
+  if (!oauthToken && !apiKey) {
+    throw new Error('No Anthropic credentials (set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)')
+  }
+
+  // 1. Create session
+  const session = await sessionManager.createSession({
+    issueId: commentData.issue_id,
+    projectId: commentData.project,
+    workspaceSlug: commentData.workspace,
+    mode,
+    triggeredBy: actor,
+    triggerCommentId: commentData.id,
+    parentSessionId: followUpSessionId,
+  })
+
+  if (!session) {
+    console.log(`[agent] Cannot create session — another session is active for issue ${commentData.issue_id}`)
+    await plane.addComment(
+      commentData.workspace,
+      commentData.project,
+      commentData.issue_id,
+      `I'm already working on this issue. Please wait for the current task to finish.`,
+      { external_source: 'zenova-agent' }
+    )
+    return
+  }
+
+  // 2. Create progress reporter and post thinking comment
+  const reporter = new ProgressReporter(
+    plane, sessionManager, session.id,
+    commentData.workspace, commentData.project, commentData.issue_id
+  )
+  await reporter.postThinkingComment()
+  await sessionManager.updateState(session.id, 'active')
+
+  // 3. Build prompt and MCP config
+  const prompt = buildPrompt(commentData, issueDetails, secrets, mode, followUpSessionId)
+  const mcpConfigPath = await writeMcpConfig(commentData.issue_id, secrets)
+
+  // 4. Run agent (streaming if oauth, fallback if API key only)
+  if (oauthToken) {
+    await runWithStreaming(oauthToken, prompt, mcpConfigPath, mode, reporter, actor, commentData, secrets)
+  } else {
+    await runWithApiFallback(apiKey!, prompt, reporter, actor)
+  }
+}
+
+// ─── Streaming CLI execution ────────────────────────────────────────────────
+
+async function runWithStreaming(
+  oauthToken: string,
+  prompt: string,
+  mcpConfigPath: string,
+  mode: 'comment' | 'autonomous',
+  reporter: ProgressReporter,
+  actor: string,
+  commentData: PlaneCommentPayload['data'],
+  secrets: Record<string, string>,
+): Promise<void> {
+  const isAutonomous = mode === 'autonomous'
+  let workDir: string | undefined
+
+  const claudeArgs = ['--print', '--output-format', 'stream-json']
+  if (mcpConfigPath) claudeArgs.push('--mcp-config', mcpConfigPath)
+
+  if (isAutonomous) {
+    claudeArgs.push('--dangerously-skip-permissions')
+    workDir = await mkdtemp(`${tmpdir()}/claude-work-${commentData.issue_id.slice(0, 8)}-`)
+  }
+
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    CLAUDE_CODE_OAUTH_TOKEN: oauthToken,
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    NO_COLOR: '1',
+  }
+
+  if (isAutonomous) {
+    env.GIT_TERMINAL_PROMPT = '0'
+    env.GIT_AUTHOR_NAME = 'Claude Agent'
+    env.GIT_AUTHOR_EMAIL = 'claude-agent@zenova.id'
+    env.GIT_COMMITTER_NAME = 'Claude Agent'
+    env.GIT_COMMITTER_EMAIL = 'claude-agent@zenova.id'
+    if (secrets.GITHUB_TOKEN) env.GITHUB_TOKEN = secrets.GITHUB_TOKEN
+  }
+
+  const timeout = isAutonomous ? 300_000 : 110_000
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn('claude', claudeArgs, {
+      cwd: workDir,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout,
+    })
+
+    proc.stdin.write(prompt, 'utf-8')
+    proc.stdin.end()
+
+    // Parse streaming output
+    const parser = new StreamParser(proc.stdout)
+    let stderr = ''
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+
+    parser.on('event', (event) => {
+      reporter.handleEvent(event).catch(err =>
+        console.error('[agent] Progress event error:', err)
+      )
+    })
+
+    parser.on('error', (err) => {
+      console.error('[agent] Stream parser error:', err)
+    })
+
+    proc.on('close', async (code, signal) => {
+      const fullText = parser.getFullText()
+      console.log(`[agent] claude exited code=${code} signal=${signal} response=${fullText.length}b`)
+      if (stderr.trim()) console.log('[agent] stderr:', stderr.slice(0, 500))
+
+      try {
+        if (code === 0 && fullText.trim()) {
+          await reporter.finalize(fullText.trim(), actor)
+          resolve()
+        } else {
+          const errMsg = `Claude exited ${code ?? signal}. ${stderr.slice(0, 300) || fullText.slice(0, 300) || 'no output'}`
+          await reporter.finalizeError(errMsg)
+          reject(new Error(errMsg))
+        }
+      } catch (err) {
+        reject(err)
+      }
+    })
+
+    proc.on('error', async (err) => {
+      await reporter.finalizeError(`Failed to spawn Claude CLI: ${err.message}`)
+      reject(new Error(`spawn claude: ${err.message}`))
+    })
+  })
+}
+
+// ─── API key fallback (no streaming) ────────────────────────────────────────
+
+async function runWithApiFallback(
+  apiKey: string,
+  prompt: string,
+  reporter: ProgressReporter,
+  actor: string,
+): Promise<void> {
+  try {
+    const client = new Anthropic({ apiKey })
+    const message = await client.messages.create({
+      model: 'claude-opus-4-6',
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    const response = message.content[0].type === 'text' ? message.content[0].text : ''
+    await reporter.finalize(response, actor)
+  } catch (err) {
+    await reporter.finalizeError(String(err))
+    throw err
+  }
+}
+
+// ─── Prompt building ────────────────────────────────────────────────────────
+
+function buildPrompt(
+  commentData: PlaneCommentPayload['data'],
+  issueDetails: any,
+  secrets: Record<string, string>,
+  mode: 'comment' | 'autonomous',
+  followUpSessionId?: string,
+): string {
+  const rawText = commentData.comment_stripped ?? ''
+  const question = rawText.replace(/@claude\b/i, '').trim()
+  const stateInfo = issueDetails.state_detail?.name ?? issueDetails.state ?? 'Unknown'
+  const priorityInfo = issueDetails.priority ?? 'none'
+  const labelsInfo = (issueDetails.label_details ?? issueDetails.labels ?? [])
+    .map((l: any) => l.name ?? l).join(', ') || 'none'
+  const descriptionInfo = issueDetails.description_stripped ?? '(no description)'
+
+  if (mode === 'comment') {
+    return buildCommentPrompt(issueDetails, question, stateInfo, priorityInfo, labelsInfo, descriptionInfo, followUpSessionId)
+  }
+  return buildAutonomousPrompt(commentData, issueDetails, secrets, question, stateInfo, priorityInfo, labelsInfo, descriptionInfo)
+}
+
+function buildCommentPrompt(
+  issueDetails: any,
+  question: string,
+  stateInfo: string,
+  priorityInfo: string,
+  labelsInfo: string,
+  descriptionInfo: string,
+  followUpSessionId?: string,
+): string {
+  const followUpNote = followUpSessionId
+    ? '\n\nThis is a follow-up to a previous conversation. The user is continuing the discussion.'
+    : ''
+
+  return `You are Claude, an AI assistant embedded in Plane (project management).
+A user has mentioned you in a comment. Respond helpfully and concisely.${followUpNote}
+
+**Current Issue:**
+Title: ${issueDetails.name ?? 'Untitled'}
+State: ${stateInfo} | Priority: ${priorityInfo}
+Labels: ${labelsInfo}
+Description: ${descriptionInfo || '(no description)'}
+
+**User's question/request:**
+${question || '(no specific question — provide a helpful summary or analysis)'}
+
+---
+You have access to Plane tools via MCP:
+- get_issue: look up any issue by ID
+- list_issues: browse project tasks
+- get_project: get project details
+- get_comments: read discussion on any issue
+- search_issues: find related work
+
+Use tools when you need to reference other tasks. Keep your response focused and actionable.`
+}
+
+function buildAutonomousPrompt(
+  commentData: PlaneCommentPayload['data'],
+  issueDetails: any,
+  secrets: Record<string, string>,
+  question: string,
+  stateInfo: string,
+  priorityInfo: string,
+  labelsInfo: string,
+  descriptionInfo: string,
+): string {
+  const repoUrl = secrets.REPO_URL ?? ''
+  const actor = commentData.actor_detail?.display_name ?? 'User'
+  const shortId = commentData.issue_id.slice(0, 8)
+  const branchName = `claude/issue-${shortId}`
+
+  return `You are an autonomous software engineering agent embedded in Plane (project management).
+A team member has asked you to work on a task. Complete it fully and autonomously.
+
+## Issue Context
+- **Title:** ${issueDetails.name ?? 'Untitled'}
+- **ID:** ${commentData.issue_id}
+- **Project:** ${commentData.project}
+- **Workspace:** ${commentData.workspace}
+- **State:** ${stateInfo} | **Priority:** ${priorityInfo}
+- **Labels:** ${labelsInfo}
+- **Repository:** ${repoUrl || '(not configured — check project settings)'}
+
+## Description
+${descriptionInfo}
+
+## Requested by ${actor}
+${question || '(no specific instruction — use your best judgment based on the issue description)'}
+
+---
+
+## Your Mission
+Complete this task end-to-end. Here's how:
+
+1. **Clone the repo** (if a repo URL is provided above):
+   \`\`\`bash
+   git clone ${repoUrl || '<repo-url>'} .
+   \`\`\`
+   Your working directory is already set to a temp folder. Just run git clone with "." as destination.
+
+2. **Understand the codebase** — read relevant files, understand the structure.
+
+3. **Implement** the requested changes. Write tests if appropriate.
+
+4. **Run tests** to verify your changes don't break anything.
+
+5. **Commit and push** to a new branch named \`${branchName}\`:
+   \`\`\`bash
+   git checkout -b ${branchName}
+   git add -A
+   git commit -m "feat: <describe what you did>"
+   git push origin ${branchName}
+   \`\`\`
+
+6. **Move the issue to "In Review"** using the \`update_issue_state\` MCP tool.
+
+7. **Summarize** what you did in your final response. Include:
+   - What you changed and why
+   - Branch name pushed to
+   - Any follow-up recommendations
+
+If no repo URL is configured, skip git steps and focus on analysis, planning, and issue management.
+
+IMPORTANT: Use the Plane MCP tools proactively — update the issue state, create subtasks if needed. Don't just silently work.`
+}
+
+// ─── MCP config helper ──────────────────────────────────────────────────────
+
+async function writeMcpConfig(issueId: string, secrets: Record<string, string>): Promise<string> {
+  const mcpDir = join(homedir(), '.claude')
+  await mkdir(mcpDir, { recursive: true })
+  const mcpConfig = {
+    mcpServers: {
+      plane: {
+        type: 'stdio',
+        command: 'node',
+        args: ['/app/dist/plane-mcp-server.js'],
+        env: {
+          PLANE_API_URL: secrets.PLANE_API_URL ?? process.env.PLANE_API_URL ?? '',
+          PLANE_API_TOKEN: secrets.PLANE_API_TOKEN ?? process.env.PLANE_API_TOKEN ?? '',
+        },
+      },
+    },
+  }
+  const mcpConfigFile = `mcp-${issueId.slice(0, 8)}.json`
+  const fullPath = join(mcpDir, mcpConfigFile)
+  await writeFile(fullPath, JSON.stringify(mcpConfig, null, 2), 'utf-8')
+  return fullPath
+}
+
+// ─── Legacy inline agent (for Docker dispatch path) ─────────────────────────
 
 export async function runInlineAgent(
   task: QueuedTask,
@@ -52,10 +391,16 @@ ${issueDetails}`
 
   if (oauthToken) {
     console.log('[agent] Using Claude Code CLI (OAuth)')
-    response = await runWithClaudeCLI(oauthToken, prompt)
+    response = await runWithClaudeCLISimple(oauthToken, prompt)
   } else {
     console.log('[agent] Using Anthropic API key')
-    response = await runWithApiKey(apiKey!, prompt)
+    const client = new Anthropic({ apiKey: apiKey! })
+    const message = await client.messages.create({
+      model: 'claude-opus-4-6',
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    response = message.content[0].type === 'text' ? message.content[0].text : ''
   }
 
   await plane.addComment(
@@ -66,11 +411,11 @@ ${issueDetails}`
   )
 }
 
-async function runWithClaudeCLI(oauthToken: string, prompt: string, mcpConfigPath?: string): Promise<string> {
+/** Simple non-streaming CLI execution (for legacy inline path) */
+async function runWithClaudeCLISimple(oauthToken: string, prompt: string, mcpConfigPath?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const claudeArgs: string[] = ['--print']
     if (mcpConfigPath) claudeArgs.push('--mcp-config', mcpConfigPath)
-    // CLAUDE_CODE_OAUTH_TOKEN env var overrides credentials file — no file writing needed
     const proc = spawn('claude', claudeArgs, {
       env: {
         ...process.env,
@@ -82,7 +427,6 @@ async function runWithClaudeCLI(oauthToken: string, prompt: string, mcpConfigPat
       timeout: 110_000,
     })
 
-    // Write prompt to stdin and close it
     proc.stdin.write(prompt, 'utf-8')
     proc.stdin.end()
 
@@ -94,309 +438,6 @@ async function runWithClaudeCLI(oauthToken: string, prompt: string, mcpConfigPat
     proc.on('close', (code, signal) => {
       console.log(`[agent] claude exited code=${code} signal=${signal} stdout=${stdout.length}b stderr=${stderr.length}b`)
       if (stderr.trim()) console.log('[agent] stderr:', stderr.slice(0, 500))
-      if (code === 0 && stdout.trim()) {
-        resolve(stdout.trim())
-      } else {
-        reject(new Error(`claude exited ${code ?? signal}. stderr: ${stderr.slice(0, 300) || 'none'}`))
-      }
-    })
-
-    proc.on('error', (err) => reject(new Error(`spawn claude: ${err.message}`)))
-  })
-}
-
-async function runWithApiKey(apiKey: string, prompt: string): Promise<string> {
-  const client = new Anthropic({ apiKey })
-  const message = await client.messages.create({
-    model: 'claude-opus-4-6',
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: prompt }],
-  })
-  return message.content[0].type === 'text' ? message.content[0].text : ''
-}
-
-// ─── Comment mention agent ────────────────────────────────────────────────────
-
-export async function runCommentAgent(
-  commentData: PlaneCommentPayload['data'],
-  issueDetails: any,
-  secrets: Record<string, string>,
-  plane: PlaneClient
-): Promise<void> {
-  const oauthToken = secrets.CLAUDE_CODE_OAUTH_TOKEN
-  if (!oauthToken) {
-    throw new Error('runCommentAgent requires CLAUDE_CODE_OAUTH_TOKEN (MCP needs Claude Code CLI)')
-  }
-
-  // Extract the user's question by stripping the @claude prefix
-  const rawText = commentData.comment_stripped ?? ''
-  const question = rawText.replace(/@claude\b/i, '').trim()
-
-  // Build rich context from the issue
-  const stateInfo = issueDetails.state_detail?.name ?? issueDetails.state ?? 'Unknown'
-  const priorityInfo = issueDetails.priority ?? 'none'
-  const labelsInfo = (issueDetails.label_details ?? issueDetails.labels ?? [])
-    .map((l: any) => l.name ?? l)
-    .join(', ') || 'none'
-  const descriptionInfo = issueDetails.description_stripped ?? ''
-
-  const prompt = `You are Claude, an AI assistant embedded in Plane (project management).
-A user has mentioned you in a comment. Respond helpfully and concisely.
-
-**Current Issue:**
-Title: ${issueDetails.name ?? 'Untitled'}
-State: ${stateInfo} | Priority: ${priorityInfo}
-Labels: ${labelsInfo}
-Description: ${descriptionInfo || '(no description)'}
-
-**User's question/request:**
-${question || '(no specific question — provide a helpful summary or analysis)'}
-
----
-You have access to Plane tools via MCP:
-- get_issue: look up any issue by ID
-- list_issues: browse project tasks
-- get_project: get project details
-- get_comments: read discussion on any issue
-- search_issues: find related work
-
-Use tools when you need to reference other tasks. Keep your response focused and actionable.`
-
-  // Write MCP config so Claude CLI can use the Plane MCP server as a subprocess
-  const mcpDir = join(homedir(), '.claude')
-  await mkdir(mcpDir, { recursive: true })
-  const mcpConfig = {
-    mcpServers: {
-      plane: {
-        type: 'stdio',
-        command: 'node',
-        args: ['/app/dist/plane-mcp-server.js'],
-        env: {
-          PLANE_API_URL: secrets.PLANE_API_URL ?? process.env.PLANE_API_URL ?? '',
-          PLANE_API_TOKEN: secrets.PLANE_API_TOKEN ?? process.env.PLANE_API_TOKEN ?? '',
-        },
-      },
-    },
-  }
-  const mcpConfigFile = `mcp-${commentData.issue_id.slice(0, 8)}.json`
-  await writeFile(join(mcpDir, mcpConfigFile), JSON.stringify(mcpConfig, null, 2), 'utf-8')
-
-  console.log('[comment-agent] Using Claude Code CLI with Plane MCP server')
-  const response = await runWithClaudeCLI(oauthToken, prompt, join(mcpDir, mcpConfigFile))
-
-  const actor = commentData.actor_detail?.display_name ?? 'User'
-  await plane.addComment(
-    commentData.workspace,
-    commentData.project,
-    commentData.issue_id,
-    `🤖 **Claude** (replying to ${actor})\n\n${response}`
-  )
-}
-
-// ─── Autonomous agent ─────────────────────────────────────────────────────────
-
-export async function runAutonomousAgent(
-  commentData: PlaneCommentPayload['data'],
-  issueDetails: any,
-  secrets: Record<string, string>,
-  plane: PlaneClient
-): Promise<void> {
-  const oauthToken = secrets.CLAUDE_CODE_OAUTH_TOKEN
-  if (!oauthToken) {
-    throw new Error('runAutonomousAgent requires CLAUDE_CODE_OAUTH_TOKEN')
-  }
-
-  const question = (commentData.comment_stripped ?? '').replace(/@claude\b/i, '').trim()
-  const actor = commentData.actor_detail?.display_name ?? 'User'
-
-  // 1. Acknowledge immediately
-  await plane.addComment(
-    commentData.workspace,
-    commentData.project,
-    commentData.issue_id,
-    `🤖 **Claude** — Got it! Working on: *${issueDetails.name ?? 'this issue'}*\n\nI'll post updates as I go.`
-  )
-
-  // 2. Fetch full comment history for context
-  let priorComments = ''
-  try {
-    const comments = await plane.getComments(commentData.workspace, commentData.project, commentData.issue_id)
-    priorComments = comments
-      .map((c) => `  [${c.actor_detail?.display_name ?? 'Unknown'}]: ${c.comment_stripped ?? ''}`)
-      .join('\n')
-  } catch {
-    // Non-fatal — proceed without comment history
-  }
-
-  // 3. Set up working directory
-  const workDir = await mkdtemp(`${tmpdir()}/claude-work-${commentData.issue_id.slice(0, 8)}-`)
-
-  // 4. Write MCP config with Plane MCP (read + write tools)
-  const mcpDir = join(homedir(), '.claude')
-  await mkdir(mcpDir, { recursive: true })
-  const mcpConfig = {
-    mcpServers: {
-      plane: {
-        type: 'stdio',
-        command: 'node',
-        args: ['/app/dist/plane-mcp-server.js'],
-        env: {
-          PLANE_API_URL: secrets.PLANE_API_URL ?? process.env.PLANE_API_URL ?? '',
-          PLANE_API_TOKEN: secrets.PLANE_API_TOKEN ?? process.env.PLANE_API_TOKEN ?? '',
-        },
-      },
-    },
-  }
-  const mcpConfigFile = `mcp-${commentData.issue_id.slice(0, 8)}.json`
-  await writeFile(join(mcpDir, mcpConfigFile), JSON.stringify(mcpConfig, null, 2), 'utf-8')
-
-  // 5. Build rich system prompt
-  const repoUrl = secrets.REPO_URL ?? ''
-  const stateInfo = issueDetails.state_detail?.name ?? issueDetails.state ?? 'Unknown'
-  const priorityInfo = issueDetails.priority ?? 'none'
-  const labelsInfo = (issueDetails.label_details ?? issueDetails.labels ?? [])
-    .map((l: any) => l.name ?? l).join(', ') || 'none'
-  const descriptionInfo = issueDetails.description_stripped ?? '(no description)'
-  const shortId = commentData.issue_id.slice(0, 8)
-  const branchName = `claude/issue-${shortId}`
-
-  const prompt = `You are an autonomous software engineering agent embedded in Plane (project management).
-A team member has asked you to work on a task. Complete it fully and autonomously.
-
-## Issue Context
-- **Title:** ${issueDetails.name ?? 'Untitled'}
-- **ID:** ${commentData.issue_id}
-- **Project:** ${commentData.project}
-- **Workspace:** ${commentData.workspace}
-- **State:** ${stateInfo} | **Priority:** ${priorityInfo}
-- **Labels:** ${labelsInfo}
-- **Repository:** ${repoUrl || '(not configured — check project settings)'}
-
-## Description
-${descriptionInfo}
-
-## Prior Discussion
-${priorComments || '(no prior comments)'}
-
-## Requested by ${actor}
-${question || '(no specific instruction — use your best judgment based on the issue description)'}
-
----
-
-## Your Mission
-Complete this task end-to-end. Here's how:
-
-1. **Clone the repo** (if a repo URL is provided above):
-   \`\`\`bash
-   git clone ${repoUrl || '<repo-url>'} .
-   \`\`\`
-   Your working directory is already set to a temp folder. Just run git clone with "." as destination.
-
-2. **Understand the codebase** — read relevant files, understand the structure.
-
-3. **Post a progress comment** using the \`add_comment\` MCP tool after you've understood the task:
-   - workspace: "${commentData.workspace}"
-   - project_id: "${commentData.project}"
-   - issue_id: "${commentData.issue_id}"
-
-4. **Implement** the requested changes. Write tests if appropriate.
-
-5. **Run tests** to verify your changes don't break anything.
-
-6. **Commit and push** to a new branch named \`${branchName}\`:
-   \`\`\`bash
-   git checkout -b ${branchName}
-   git add -A
-   git commit -m "feat: <describe what you did>"
-   git push origin ${branchName}
-   \`\`\`
-
-7. **Move the issue to "In Review"** using the \`update_issue_state\` MCP tool.
-
-8. **Summarize** what you did in your final response. Include:
-   - What you changed and why
-   - Branch name pushed to
-   - Any follow-up recommendations
-
-If no repo URL is configured, skip git steps and focus on analysis, planning, and issue management (creating subtasks, updating state, etc.).
-
-IMPORTANT: Use the Plane MCP tools proactively — post progress, create subtasks, update the issue. Don't just silently work.`
-
-  // 6. Run claude autonomously
-  console.log('[autonomous-agent] Using Claude Code CLI with Plane MCP')
-  let response: string
-  try {
-    response = await runWithClaudeAutonomous(
-      oauthToken,
-      prompt,
-      workDir,
-      {
-        ...(secrets.GITHUB_TOKEN ? { GITHUB_TOKEN: secrets.GITHUB_TOKEN } : {}),
-      },
-      join(mcpDir, mcpConfigFile)
-    )
-  } catch (err) {
-    await plane.addComment(
-      commentData.workspace,
-      commentData.project,
-      commentData.issue_id,
-      `🤖 **Claude** — Encountered an error during autonomous run:\n\n\`\`\`\n${String(err).slice(0, 500)}\n\`\`\``
-    )
-    throw err
-  }
-
-  // 7. Post final summary
-  await plane.addComment(
-    commentData.workspace,
-    commentData.project,
-    commentData.issue_id,
-    `🤖 **Claude** — Work complete (requested by ${actor})\n\n${response}`
-  )
-}
-
-async function runWithClaudeAutonomous(
-  oauthToken: string,
-  prompt: string,
-  workDir: string,
-  extraEnv: Record<string, string> = {},
-  mcpConfigPath?: string
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const claudeArgs = ['--print', '--dangerously-skip-permissions']
-    if (mcpConfigPath) claudeArgs.push('--mcp-config', mcpConfigPath)
-    const proc = spawn(
-      'claude',
-      claudeArgs,
-      {
-        cwd: workDir,
-        env: {
-          ...process.env,
-          ...extraEnv,
-          CLAUDE_CODE_OAUTH_TOKEN: oauthToken,
-          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-          NO_COLOR: '1',
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_AUTHOR_NAME: 'Claude Agent',
-          GIT_AUTHOR_EMAIL: 'claude-agent@zenova.id',
-          GIT_COMMITTER_NAME: 'Claude Agent',
-          GIT_COMMITTER_EMAIL: 'claude-agent@zenova.id',
-        },
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 300_000,
-      }
-    )
-
-    proc.stdin.write(prompt, 'utf-8')
-    proc.stdin.end()
-
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-
-    proc.on('close', (code, signal) => {
-      console.log(`[autonomous-agent] claude exited code=${code} signal=${signal} stdout=${stdout.length}b`)
-      if (stderr.trim()) console.log('[autonomous-agent] stderr:', stderr.slice(0, 500))
       if (code === 0 && stdout.trim()) {
         resolve(stdout.trim())
       } else {

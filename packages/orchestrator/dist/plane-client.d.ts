@@ -16,7 +16,15 @@ export declare class PlaneClient {
         created_at: string;
     }>>;
     updateIssueState(workspaceSlug: string, projectId: string, issueId: string, stateId: string): Promise<any>;
-    addComment(workspaceSlug: string, projectId: string, issueId: string, comment: string): Promise<any>;
+    addComment(workspaceSlug: string, projectId: string, issueId: string, comment: string, opts?: {
+        external_source?: string;
+        external_id?: string;
+    }): Promise<any>;
+    addCommentHtml(workspaceSlug: string, projectId: string, issueId: string, html: string, opts?: {
+        external_source?: string;
+        external_id?: string;
+    }): Promise<any>;
+    updateComment(workspaceSlug: string, projectId: string, issueId: string, commentId: string, html: string): Promise<any>;
     addIssueLink(workspaceSlug: string, projectId: string, issueId: string, url: string, title: string): Promise<any>;
     getProjectStates(workspaceSlug: string, projectId: string): Promise<any>;
     getWorkspaceMembers(workspaceSlug: string): Promise<Array<{

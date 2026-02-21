@@ -5,6 +5,7 @@ import { randomUUID, createHmac, timingSafeEqual } from 'crypto';
 import { TaskQueue } from './queue.js';
 import { ContainerManager } from './docker.js';
 import { PlaneClient } from './plane-client.js';
+import { SessionManager } from './agent-session.js';
 export const app = new Hono();
 app.use('*', logger());
 let dispatcher = null;
@@ -13,6 +14,9 @@ let containers = null;
 let plane = null;
 let webhookSecret = null;
 let redisClient = null;
+let sessionManager = null;
+let staleCleanupTimer = null;
+let botUserId = null; // Claude's Plane user ID for self-loop prevention
 export function init(deps) {
     dispatcher = deps.dispatcher;
     queue = deps.queue;
@@ -20,6 +24,23 @@ export function init(deps) {
     plane = deps.plane;
     webhookSecret = deps.webhookSecret ?? null;
     redisClient = deps.redis ?? null;
+    // Initialize session manager if Redis is available
+    if (redisClient) {
+        sessionManager = new SessionManager(redisClient);
+        // Stale session cleanup every 5 minutes
+        staleCleanupTimer = setInterval(async () => {
+            if (!sessionManager)
+                return;
+            const cleaned = await sessionManager.cleanupStaleSessions();
+            if (cleaned > 0)
+                console.log(`[session] Cleaned up ${cleaned} stale sessions`);
+        }, 5 * 60 * 1000);
+    }
+    // Load bot user ID from settings (set via admin or env)
+    loadBotUserId().catch(() => { });
+}
+async function loadBotUserId() {
+    botUserId = await getSetting('BOT_USER_ID') || process.env.BOT_USER_ID || null;
 }
 // Redis-backed settings store
 function settingsKey(ws) { return `zenova:settings:${ws}`; }
@@ -80,98 +101,190 @@ function verifyWebhookSignature(body, signature) {
         return false;
     }
 }
+// ─── Self-loop prevention (3 layers) ────────────────────────────────────────
+function isBotComment(comment) {
+    // Layer 1: Check external_source tag (set by our own comments)
+    if (comment.external_source === 'zenova-agent') {
+        console.log('[loop-prevention] Skipping: external_source is zenova-agent');
+        return true;
+    }
+    // Layer 2: Check actor ID against bot user
+    if (botUserId && comment.actor_detail?.id === botUserId) {
+        console.log('[loop-prevention] Skipping: actor is bot user');
+        return true;
+    }
+    // Layer 3: Check content prefix patterns
+    const text = comment.comment_stripped ?? comment.comment_html ?? '';
+    if (text.startsWith('🤖 Claude') || text.startsWith('🤖 **Claude')) {
+        console.log('[loop-prevention] Skipping: content starts with bot prefix');
+        return true;
+    }
+    return false;
+}
+// ─── Webhook deduplication ──────────────────────────────────────────────────
+async function isDuplicateWebhook(commentId) {
+    if (!redisClient)
+        return false;
+    const key = `zenova:webhook-dedup:${commentId}`;
+    const result = await redisClient.set(key, '1', 'EX', 60, 'NX');
+    return !result; // null means key already existed = duplicate
+}
+// ─── Build secrets helper ───────────────────────────────────────────────────
+async function buildSecrets(workspace, projectId) {
+    const repoUrl = await getRepoForProject(projectId, workspace);
+    return {
+        GITHUB_TOKEN: await getSetting('GITHUB_TOKEN', workspace) || process.env.GITHUB_TOKEN || '',
+        CLAUDE_CODE_OAUTH_TOKEN: await getSetting('CLAUDE_CODE_OAUTH_TOKEN', workspace) || process.env.CLAUDE_CODE_OAUTH_TOKEN || '',
+        ANTHROPIC_API_KEY: await getSetting('ANTHROPIC_API_KEY', workspace) || process.env.ANTHROPIC_API_KEY || '',
+        PLANE_API_URL: process.env.PLANE_API_URL ?? '',
+        PLANE_API_TOKEN: process.env.PLANE_API_TOKEN ?? '',
+        REPO_URL: repoUrl,
+    };
+}
+// ─── Comment handler (shared between webhook and debug) ─────────────────────
+async function handleCommentEvent(comment, skipDedup = false) {
+    // Self-loop prevention
+    if (isBotComment(comment)) {
+        return { dispatched: false, skipped: true, reason: 'bot comment (self-loop prevention)' };
+    }
+    // Webhook deduplication
+    if (!skipDedup && await isDuplicateWebhook(comment.id)) {
+        console.log(`[webhook] Duplicate webhook for comment ${comment.id}`);
+        return { dispatched: false, skipped: true, reason: 'duplicate webhook' };
+    }
+    // Extract text
+    const rawHtml = comment.comment_html ?? '';
+    const stripped = comment.comment_stripped?.trim()
+        || rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const text = stripped.toLowerCase();
+    console.log(`[webhook] comment text: "${text.slice(0, 100)}"`);
+    if (!plane)
+        return { dispatched: false, error: 'not initialized' };
+    // Check for follow-up: if there's an awaiting_input session for this issue
+    if (sessionManager) {
+        const awaitingSession = await sessionManager.getAwaitingSessionForIssue(comment.issue_id);
+        if (awaitingSession) {
+            console.log(`[webhook] Follow-up detected for session ${awaitingSession.id}`);
+            const issueDetails = await plane.getIssue(comment.workspace, comment.project, comment.issue_id);
+            const secrets = await buildSecrets(comment.workspace, comment.project);
+            const { runAgent } = await import('./agent-runner.js');
+            runAgent({
+                commentData: comment,
+                issueDetails,
+                secrets,
+                plane,
+                sessionManager,
+                mode: 'comment',
+                followUpSessionId: awaitingSession.id,
+            }).catch((err) => console.error('[follow-up-agent] error:', err));
+            return { dispatched: true, mode: 'follow-up' };
+        }
+    }
+    // Check for @claude mention
+    if (!text.includes('@claude')) {
+        return { dispatched: false, skipped: true, reason: 'no @claude mention' };
+    }
+    try {
+        const issueDetails = await plane.getIssue(comment.workspace, comment.project, comment.issue_id);
+        const secrets = await buildSecrets(comment.workspace, comment.project);
+        const { isActionRequest } = await import('./agent-runner.js');
+        const userQuestion = stripped.replace(/@claude\b/i, '').trim();
+        const autonomous = isActionRequest(userQuestion);
+        const mode = autonomous ? 'autonomous' : 'comment';
+        if (sessionManager) {
+            // Use new unified agent with sessions
+            const { runAgent } = await import('./agent-runner.js');
+            console.log(`[webhook] @claude → ${mode} mode (session-based)`);
+            runAgent({
+                commentData: comment,
+                issueDetails,
+                secrets,
+                plane,
+                sessionManager,
+                mode,
+            }).catch((err) => console.error(`[${mode}-agent] error:`, err));
+        }
+        else {
+            // Fallback: no Redis, no sessions — use legacy path
+            console.log(`[webhook] @claude → ${mode} mode (legacy, no Redis)`);
+            const { runInlineAgent } = await import('./agent-runner.js');
+            const task = {
+                id: randomUUID(),
+                issueId: comment.issue_id,
+                projectId: comment.project,
+                workspaceSlug: comment.workspace,
+                agentType: 'claude',
+                priority: 2,
+                payload: issueDetails,
+                queuedAt: new Date().toISOString(),
+            };
+            runInlineAgent(task, secrets, plane).catch((err) => console.error('[legacy-agent] error:', err));
+        }
+        return { dispatched: true, mode };
+    }
+    catch (err) {
+        console.error('[comment-handler] setup error:', err);
+        return { dispatched: false, error: String(err) };
+    }
+}
 // ============================================================
 // Static: Connect Wizard SPA
 // ============================================================
 app.get('/connect', (c) => c.redirect('/connect/index.html'));
 app.use('/connect/*', serveStatic({ root: './public' }));
 // ============================================================
-// Debug: test webhook without signature (dev/staging only)
-// POST /debug/webhook — same as /webhooks/plane but skips HMAC check
+// Debug routes (gated behind non-production)
 // ============================================================
-app.post('/debug/webhook', async (c) => {
-    const rawBody = await c.req.text();
-    let payload;
-    try {
-        payload = JSON.parse(rawBody);
-    }
-    catch {
-        return c.json({ error: 'invalid JSON' }, 400);
-    }
-    console.log(`[debug-webhook] ${payload.event}.${payload.action}`);
-    if ((payload.event === 'comment' || payload.event === 'issue_comment') && payload.action === 'created') {
-        const comment = payload.data;
-        // Plane often sends empty comment_stripped with content only in comment_html — check both
-        const rawHtml = comment.comment_html ?? '';
-        const stripped = comment.comment_stripped?.trim()
-            || rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-        const text = stripped.toLowerCase();
-        console.log(`[debug-webhook] comment text: "${text.slice(0, 100)}"`);
-        if (!text.includes('@claude')) {
-            return c.json({ skipped: true, reason: 'no @claude mention' });
-        }
-        if (!plane)
-            return c.json({ error: 'not initialized' }, 503);
+if (process.env.NODE_ENV !== 'production') {
+    app.post('/debug/webhook', async (c) => {
+        const rawBody = await c.req.text();
+        let payload;
         try {
-            const issueDetails = await plane.getIssue(comment.workspace, comment.project, comment.issue_id);
-            const repoUrl = await getRepoForProject(comment.project, comment.workspace);
-            const secrets = {
-                GITHUB_TOKEN: await getSetting('GITHUB_TOKEN', comment.workspace) || process.env.GITHUB_TOKEN || '',
-                CLAUDE_CODE_OAUTH_TOKEN: await getSetting('CLAUDE_CODE_OAUTH_TOKEN', comment.workspace) || process.env.CLAUDE_CODE_OAUTH_TOKEN || '',
-                ANTHROPIC_API_KEY: await getSetting('ANTHROPIC_API_KEY', comment.workspace) || process.env.ANTHROPIC_API_KEY || '',
-                PLANE_API_URL: process.env.PLANE_API_URL ?? '',
-                PLANE_API_TOKEN: process.env.PLANE_API_TOKEN ?? '',
-                REPO_URL: repoUrl,
-            };
-            const { runCommentAgent, runAutonomousAgent, isActionRequest } = await import('./agent-runner.js');
-            const userQuestion = stripped.replace(/@claude\b/i, '').trim();
-            const autonomous = isActionRequest(userQuestion);
-            if (autonomous) {
-                runAutonomousAgent(comment, issueDetails, secrets, plane).catch((err) => console.error('[debug-autonomous] error:', err));
-            }
-            else {
-                runCommentAgent(comment, issueDetails, secrets, plane).catch((err) => console.error('[debug-comment] error:', err));
-            }
-            return c.json({ dispatched: true, mode: autonomous ? 'autonomous' : 'comment', issue: issueDetails.name });
+            payload = JSON.parse(rawBody);
         }
-        catch (err) {
-            return c.json({ error: String(err) }, 500);
+        catch {
+            return c.json({ error: 'invalid JSON' }, 400);
         }
-    }
-    return c.json({ skipped: true, reason: 'not a comment.created event' });
-});
-// ============================================================
-// Debug: docker socket diagnostics + claude CLI check
-// ============================================================
-app.get('/debug/docker', async (c) => {
-    const { existsSync } = await import('fs');
-    const { execSync } = await import('child_process');
-    const paths = ['/var/run/docker.sock', '/run/docker.sock'];
-    const check = {};
-    for (const p of paths) {
-        check[p] = existsSync(p);
-    }
-    let ls = '';
-    try {
-        ls = execSync('ls -la /var/run/ /run/ 2>&1 | head -20').toString();
-    }
-    catch { }
-    let claudeVersion = '';
-    let claudePath = '';
-    try {
-        claudeVersion = execSync('claude --version 2>&1').toString().trim();
-    }
-    catch {
-        claudeVersion = 'NOT FOUND';
-    }
-    try {
-        claudePath = execSync('which claude 2>&1').toString().trim();
-    }
-    catch {
-        claudePath = 'NOT FOUND';
-    }
-    return c.json({ socketPaths: check, ls, claudeVersion, claudePath });
-});
+        console.log(`[debug-webhook] ${payload.event}.${payload.action}`);
+        if ((payload.event === 'comment' || payload.event === 'issue_comment') && payload.action === 'created') {
+            const comment = payload.data;
+            const result = await handleCommentEvent(comment, /* skipDedup */ true);
+            if (result.error)
+                return c.json({ error: result.error }, result.error === 'not initialized' ? 503 : 500);
+            return c.json(result);
+        }
+        return c.json({ skipped: true, reason: 'not a comment.created event' });
+    });
+    app.get('/debug/docker', async (c) => {
+        const { existsSync } = await import('fs');
+        const { execSync } = await import('child_process');
+        const paths = ['/var/run/docker.sock', '/run/docker.sock'];
+        const check = {};
+        for (const p of paths) {
+            check[p] = existsSync(p);
+        }
+        let ls = '';
+        try {
+            ls = execSync('ls -la /var/run/ /run/ 2>&1 | head -20').toString();
+        }
+        catch { }
+        let claudeVersion = '';
+        let claudePath = '';
+        try {
+            claudeVersion = execSync('claude --version 2>&1').toString().trim();
+        }
+        catch {
+            claudeVersion = 'NOT FOUND';
+        }
+        try {
+            claudePath = execSync('which claude 2>&1').toString().trim();
+        }
+        catch {
+            claudePath = 'NOT FOUND';
+        }
+        return c.json({ socketPaths: check, ls, claudeVersion, claudePath });
+    });
+}
 // ============================================================
 // Proxy: validate Plane credentials (avoids browser CORS)
 // ============================================================
@@ -193,10 +306,91 @@ app.post('/api/validate-plane', async (c) => {
     }
 });
 // ============================================================
+// Session API
+// ============================================================
+app.get('/api/sessions', async (c) => {
+    if (!sessionManager)
+        return c.json({ error: 'sessions not available (no Redis)' }, 503);
+    const sessions = await sessionManager.getActiveSessions();
+    return c.json({ sessions });
+});
+app.get('/api/sessions/:id', async (c) => {
+    if (!sessionManager)
+        return c.json({ error: 'sessions not available' }, 503);
+    const session = await sessionManager.getSession(c.req.param('id'));
+    if (!session)
+        return c.json({ error: 'session not found' }, 404);
+    return c.json({ session });
+});
+app.get('/api/sessions/:id/stream', async (c) => {
+    if (!sessionManager)
+        return c.json({ error: 'sessions not available' }, 503);
+    const sessionId = c.req.param('id');
+    const session = await sessionManager.getSession(sessionId);
+    if (!session)
+        return c.json({ error: 'session not found' }, 404);
+    // SSE stream
+    const stream = new ReadableStream({
+        async start(controller) {
+            const encoder = new TextEncoder();
+            const send = (data) => {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+            };
+            // Send current state
+            send({ type: 'session', session });
+            // Poll for updates
+            let lastUpdate = session.updatedAt;
+            const interval = setInterval(async () => {
+                const updated = await sessionManager.getSession(sessionId);
+                if (!updated) {
+                    send({ type: 'error', message: 'session not found' });
+                    clearInterval(interval);
+                    controller.close();
+                    return;
+                }
+                if (updated.updatedAt > lastUpdate) {
+                    lastUpdate = updated.updatedAt;
+                    send({ type: 'session', session: updated });
+                }
+                if (updated.state === 'complete' || updated.state === 'error') {
+                    send({ type: 'done', state: updated.state });
+                    clearInterval(interval);
+                    controller.close();
+                }
+            }, 2000);
+            // Auto-close after 10 minutes
+            setTimeout(() => {
+                clearInterval(interval);
+                controller.close();
+            }, 10 * 60 * 1000);
+        },
+    });
+    return new Response(stream, {
+        headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+        },
+    });
+});
+// ============================================================
 // Health & Status
 // ============================================================
 app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
-app.get('/status', async (c) => c.json({ running: containers?.getRunning() ?? [], queueDepth: await queue?.depth() ?? 0 }));
+app.get('/status', async (c) => {
+    const activeSessions = sessionManager ? await sessionManager.getActiveSessions() : [];
+    return c.json({
+        running: containers?.getRunning() ?? [],
+        queueDepth: await queue?.depth() ?? 0,
+        activeSessions: activeSessions.map(s => ({
+            id: s.id,
+            issueId: s.issueId,
+            state: s.state,
+            mode: s.mode,
+            triggeredBy: s.triggeredBy,
+        })),
+    });
+});
 // ============================================================
 // Workspace Setup
 // ============================================================
@@ -314,6 +508,15 @@ const ADMIN_HTML = `<!DOCTYPE html>
   </div>
 
   <div class="card">
+    <h2>Self-Loop Prevention</h2>
+    <div class="field">
+      <label>Bot User ID (Plane User ID for Claude)</label>
+      <input type="text" id="BOT_USER_ID" placeholder="uuid-of-claude-bot-user">
+      <div class="hint">If Claude uses a dedicated Plane account, set its user ID here to prevent it from responding to its own comments.</div>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Repository Mapping</h2>
     <p class="hint" style="margin-bottom:1rem">Map each Plane project to a GitHub repo. Agents will clone and push to the correct repo per project.</p>
     <div class="field">
@@ -334,7 +537,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
 <div class="status-bar" id="status-bar"></div>
 
 <script>
-const SETTINGS_KEYS = ['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','GEMINI_API_KEY','GITHUB_TOKEN','DEFAULT_REPO_URL'];
+const SETTINGS_KEYS = ['CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','GEMINI_API_KEY','GITHUB_TOKEN','DEFAULT_REPO_URL','BOT_USER_ID'];
 
 async function loadSettings() {
   const res = await fetch('/admin/api/settings');
@@ -360,12 +563,21 @@ async function loadStatus() {
     badge.textContent = 'Healthy';
     badge.className = 'badge badge-green';
     const list = document.getElementById('running-list');
-    if (data.running.length === 0) {
+    const parts = [];
+    if (data.running.length > 0) {
+      parts.push(data.running.map(r =>
+        '<div class="agent"><span class="agent-name">' + r.agentType + '</span><span>' + r.issueId + '</span></div>'
+      ).join(''));
+    }
+    if (data.activeSessions && data.activeSessions.length > 0) {
+      parts.push(data.activeSessions.map(s =>
+        '<div class="agent"><span class="agent-name">Session: ' + s.mode + '</span><span>' + s.state + ' (' + s.triggeredBy + ')</span></div>'
+      ).join(''));
+    }
+    if (parts.length === 0) {
       list.innerHTML = '<div style="color:#666">No agents running. Queue depth: ' + data.queueDepth + '</div>';
     } else {
-      list.innerHTML = data.running.map(r =>
-        '<div class="agent"><span class="agent-name">' + r.agentType + '</span><span>' + r.issueId + '</span></div>'
-      ).join('');
+      list.innerHTML = parts.join('');
     }
   } catch {
     document.getElementById('health-badge').textContent = 'Error';
@@ -456,6 +668,8 @@ app.post('/admin/api/settings', async (c) => {
                 await setRepoForProject(projectId, url);
             }
         }
+        // Reload bot user ID after settings save
+        await loadBotUserId();
         return c.json({ ok: true });
     }
     catch (err) {
@@ -513,47 +727,48 @@ app.post('/webhooks/plane', async (c) => {
     // ── Comment event: check for @claude mention ───────────────────────────────
     if ((payload.event === 'comment' || payload.event === 'issue_comment') && payload.action === 'created') {
         const comment = payload.data;
-        // Plane often sends empty comment_stripped — fall back to stripping comment_html
-        const rawHtml = comment.comment_html ?? '';
-        const stripped = comment.comment_stripped?.trim()
-            || rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-        const text = stripped.toLowerCase();
-        console.log(`[webhook] comment text: "${text.slice(0, 100)}"`);
-        if (!text.includes('@claude')) {
-            return c.json({ skipped: true, reason: 'no @claude mention' });
-        }
-        if (!plane)
-            return c.json({ error: 'not initialized' }, 503);
-        try {
-            const issueDetails = await plane.getIssue(comment.workspace, comment.project, comment.issue_id);
-            const repoUrl = await getRepoForProject(comment.project, comment.workspace);
-            const secrets = {
-                GITHUB_TOKEN: await getSetting('GITHUB_TOKEN', comment.workspace) || process.env.GITHUB_TOKEN || '',
-                CLAUDE_CODE_OAUTH_TOKEN: await getSetting('CLAUDE_CODE_OAUTH_TOKEN', comment.workspace) || process.env.CLAUDE_CODE_OAUTH_TOKEN || '',
-                ANTHROPIC_API_KEY: await getSetting('ANTHROPIC_API_KEY', comment.workspace) || process.env.ANTHROPIC_API_KEY || '',
-                PLANE_API_URL: process.env.PLANE_API_URL ?? '',
-                PLANE_API_TOKEN: process.env.PLANE_API_TOKEN ?? '',
-                REPO_URL: repoUrl,
-            };
-            const { runCommentAgent, runAutonomousAgent, isActionRequest } = await import('./agent-runner.js');
-            const userQuestion = stripped.replace(/@claude\b/i, '').trim();
-            const autonomous = isActionRequest(userQuestion);
-            if (autonomous) {
-                console.log('[webhook] @claude → autonomous mode');
-                runAutonomousAgent(comment, issueDetails, secrets, plane).catch((err) => console.error('[autonomous-agent] error:', err));
-            }
-            else {
-                console.log('[webhook] @claude → Q&A mode');
-                runCommentAgent(comment, issueDetails, secrets, plane).catch((err) => console.error('[comment-agent] error:', err));
-            }
-            return c.json({ dispatched: true, mode: autonomous ? 'autonomous' : 'comment' });
-        }
-        catch (err) {
-            console.error('[comment-agent] setup error:', err);
-            return c.json({ error: String(err) }, 500);
-        }
+        const result = await handleCommentEvent(comment);
+        if (result.error === 'not initialized')
+            return c.json({ error: result.error }, 503);
+        if (result.error)
+            return c.json({ error: result.error }, 500);
+        return c.json(result);
     }
     // ── End comment handler ────────────────────────────────────────────────────
+    // ── Issue update: check for assignment trigger ─────────────────────────────
+    if (payload.event === 'issue' && payload.action === 'updated' && botUserId) {
+        const issue = payload.data;
+        if (issue.assignees?.includes(botUserId)) {
+            console.log(`[webhook] Claude assigned to issue ${issue.id}`);
+            if (plane && sessionManager) {
+                // Check if there's already an active session
+                const existing = await sessionManager.getActiveSessionForIssue(issue.id);
+                if (!existing) {
+                    const secrets = await buildSecrets(issue.workspace, issue.project);
+                    const syntheticComment = {
+                        id: `assign-${randomUUID()}`,
+                        issue_id: issue.id,
+                        project: issue.project,
+                        workspace: issue.workspace,
+                        comment_stripped: `@claude Work on this issue based on the description.`,
+                        comment_html: `<p>@claude Work on this issue based on the description.</p>`,
+                        actor_detail: { id: 'system', display_name: 'Assignment' },
+                    };
+                    const { runAgent } = await import('./agent-runner.js');
+                    runAgent({
+                        commentData: syntheticComment,
+                        issueDetails: issue,
+                        secrets,
+                        plane,
+                        sessionManager,
+                        mode: 'autonomous',
+                    }).catch((err) => console.error('[assignment-agent] error:', err));
+                    return c.json({ dispatched: true, mode: 'assignment-trigger' });
+                }
+            }
+        }
+    }
+    // ── End assignment trigger ─────────────────────────────────────────────────
     if (!dispatcher || !queue || !containers)
         return c.json({ error: 'not initialized' }, 503);
     const match = dispatcher.shouldDispatch(payload);
