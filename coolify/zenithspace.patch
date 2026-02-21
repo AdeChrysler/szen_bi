@@ -1,0 +1,1473 @@
+From 64877b119389e57bb9399d851d6b2c76372fca8d Mon Sep 17 00:00:00 2001
+From: AdeChrysler <ade@zenova.id>
+Date: Sat, 21 Feb 2026 12:45:00 +0000
+Subject: [PATCH] feat: ZenithSpace branding, true black dark theme, AI agent
+ settings UI
+
+- True black dark theme (oklch(0% 0 0) canvas, near-black surfaces)
+- Dark editor backgrounds with subtle hue tints
+- Full rebrand: Plane -> ZenithSpace across web, space, admin apps
+- AI Agent settings page (workspace settings > Features > AI Agent)
+- Remove bot user exclusion from @mention search
+- PWA manifests, metadata, page titles all updated
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+---
+ apps/admin/app/(all)/(dashboard)/ai/page.tsx  |   2 +-
+ .../(dashboard)/authentication/gitea/form.tsx |   4 +-
+ .../authentication/github/form.tsx            |   4 +-
+ .../authentication/gitlab/form.tsx            |   4 +-
+ .../authentication/google/form.tsx            |   4 +-
+ .../(all)/(dashboard)/authentication/page.tsx |   2 +-
+ .../app/(all)/(dashboard)/email/page.tsx      |   2 +-
+ .../app/(all)/(dashboard)/general/form.tsx    |   4 +-
+ .../(dashboard)/sidebar-help-section.tsx      |   4 +-
+ apps/admin/app/(all)/(home)/page.tsx          |   2 +-
+ apps/admin/app/(all)/(home)/sign-in-form.tsx  |   2 +-
+ apps/admin/app/root.tsx                       |   6 +-
+ .../components/common/new-user-popup.tsx      |   4 +-
+ apps/admin/components/common/page-header.tsx  |   2 +-
+ .../instance/instance-not-ready.tsx           |   4 +-
+ apps/admin/components/instance/setup-form.tsx |   6 +-
+ apps/admin/hooks/oauth/core.tsx               |  10 +-
+ apps/admin/hooks/use-sidebar-menu/core.ts     |   2 +-
+ apps/admin/package.json                       |   2 +-
+ apps/admin/public/site.webmanifest.json       |   6 +-
+ apps/api/plane/app/views/search/base.py       |   2 -
+ apps/space/README.md                          |   4 +-
+ apps/space/app/error.tsx                      |   6 +-
+ apps/space/app/issues/[anchor]/layout.tsx     |   4 +-
+ apps/space/app/root.tsx                       |   8 +-
+ .../account/auth-forms/auth-header.tsx        |   4 +-
+ .../core/components/common/powered-by.tsx     |   2 +-
+ .../instance/instance-failure-view.tsx        |   2 +-
+ apps/space/core/lib/instance-provider.tsx     |   2 +-
+ apps/space/public/site.webmanifest.json       |   6 +-
+ .../(detail)/[projectId]/intake/page.tsx      |   2 +-
+ .../settings/(workspace)/ai-agent/header.tsx  |  39 ++
+ .../settings/(workspace)/ai-agent/page.tsx    |  47 +++
+ .../(all)/accounts/forgot-password/layout.tsx |   2 +-
+ .../(all)/accounts/reset-password/layout.tsx  |   2 +-
+ .../(all)/accounts/set-password/layout.tsx    |   2 +-
+ apps/web/app/(all)/sign-up/layout.tsx         |   2 +-
+ apps/web/app/layout.tsx                       |   6 +-
+ apps/web/app/root.tsx                         |   4 +-
+ apps/web/app/routes/core.ts                   |   4 +
+ .../settings/workspace/sidebar/item-icon.tsx  |   3 +-
+ .../workspace/settings/ai-agent.tsx           | 356 ++++++++++++++++++
+ apps/web/public/manifest.json                 |   4 +-
+ apps/web/public/site.webmanifest.json         |   6 +-
+ apps/web/styles/globals.css                   |  16 +-
+ packages/constants/src/metadata.ts            |  22 +-
+ packages/constants/src/settings/workspace.ts  |   9 +-
+ packages/i18n/src/locales/en/translations.ts  |   3 +
+ packages/tailwind-config/variables.css        |  64 ++--
+ packages/types/src/settings.ts                |   2 +-
+ 50 files changed, 583 insertions(+), 128 deletions(-)
+ create mode 100644 apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/header.tsx
+ create mode 100644 apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/page.tsx
+ create mode 100644 apps/web/core/components/workspace/settings/ai-agent.tsx
+
+diff --git a/apps/admin/app/(all)/(dashboard)/ai/page.tsx b/apps/admin/app/(all)/(dashboard)/ai/page.tsx
+index c028130..66f099b 100644
+--- a/apps/admin/app/(all)/(dashboard)/ai/page.tsx
++++ b/apps/admin/app/(all)/(dashboard)/ai/page.tsx
+@@ -26,7 +26,7 @@ const InstanceAIPage = observer(function InstanceAIPage(_props: Route.ComponentP
+     <PageWrapper
+       header={{
+         title: "AI features for all your workspaces",
+-        description: "Configure your AI API credentials so Plane AI features are turned on for all your workspaces.",
++        description: "Configure your AI API credentials so ZenithSpace AI features are turned on for all your workspaces.",
+       }}
+     >
+       {formattedConfig ? (
+diff --git a/apps/admin/app/(all)/(dashboard)/authentication/gitea/form.tsx b/apps/admin/app/(all)/(dashboard)/authentication/gitea/form.tsx
+index 5e137ee..3f7d922 100644
+--- a/apps/admin/app/(all)/(dashboard)/authentication/gitea/form.tsx
++++ b/apps/admin/app/(all)/(dashboard)/authentication/gitea/form.tsx
+@@ -178,7 +178,7 @@ export function InstanceGiteaConfigForm(props: Props) {
+       <div className="flex flex-col gap-8">
+         <div className="grid grid-cols-2 gap-x-12 gap-y-8 w-full">
+           <div className="flex flex-col gap-y-4 col-span-2 md:col-span-1 pt-1">
+-            <div className="pt-2.5 text-18 font-medium">Gitea-provided details for Plane</div>
++            <div className="pt-2.5 text-18 font-medium">Gitea-provided details for ZenithSpace</div>
+             {GITEA_FORM_FIELDS.map((field) => (
+               <ControllerInput
+                 key={field.key}
+@@ -212,7 +212,7 @@ export function InstanceGiteaConfigForm(props: Props) {
+           </div>
+           <div className="col-span-2 md:col-span-1">
+             <div className="flex flex-col gap-y-4 px-6 pt-1.5 pb-4 bg-layer-1 rounded-lg">
+-              <div className="pt-2 text-18 font-medium">Plane-provided details for Gitea</div>
++              <div className="pt-2 text-18 font-medium">ZenithSpace-provided details for Gitea</div>
+               {GITEA_SERVICE_FIELD.map((field) => (
+                 <CopyField key={field.key} label={field.label} url={field.url} description={field.description} />
+               ))}
+diff --git a/apps/admin/app/(all)/(dashboard)/authentication/github/form.tsx b/apps/admin/app/(all)/(dashboard)/authentication/github/form.tsx
+index 166fc44..416e13a 100644
+--- a/apps/admin/app/(all)/(dashboard)/authentication/github/form.tsx
++++ b/apps/admin/app/(all)/(dashboard)/authentication/github/form.tsx
+@@ -199,7 +199,7 @@ export function InstanceGithubConfigForm(props: Props) {
+       <div className="flex flex-col gap-8">
+         <div className="grid grid-cols-2 gap-x-12 gap-y-8 w-full">
+           <div className="flex flex-col gap-y-4 col-span-2 md:col-span-1 pt-1">
+-            <div className="pt-2.5 text-18 font-medium">GitHub-provided details for Plane</div>
++            <div className="pt-2.5 text-18 font-medium">GitHub-provided details for ZenithSpace</div>
+             {GITHUB_FORM_FIELDS.map((field) => (
+               <ControllerInput
+                 key={field.key}
+@@ -232,7 +232,7 @@ export function InstanceGithubConfigForm(props: Props) {
+             </div>
+           </div>
+           <div className="col-span-2 md:col-span-1 flex flex-col gap-y-6">
+-            <div className="pt-2 text-18 font-medium">Plane-provided details for GitHub</div>
++            <div className="pt-2 text-18 font-medium">ZenithSpace-provided details for GitHub</div>
+ 
+             <div className="flex flex-col gap-y-4">
+               {/* common service details */}
+diff --git a/apps/admin/app/(all)/(dashboard)/authentication/gitlab/form.tsx b/apps/admin/app/(all)/(dashboard)/authentication/gitlab/form.tsx
+index 6f0a4f4..750390b 100644
+--- a/apps/admin/app/(all)/(dashboard)/authentication/gitlab/form.tsx
++++ b/apps/admin/app/(all)/(dashboard)/authentication/gitlab/form.tsx
+@@ -182,7 +182,7 @@ export function InstanceGitlabConfigForm(props: Props) {
+       <div className="flex flex-col gap-8">
+         <div className="grid grid-cols-2 gap-x-12 gap-y-8 w-full">
+           <div className="flex flex-col gap-y-4 col-span-2 md:col-span-1 pt-1">
+-            <div className="pt-2.5 text-18 font-medium">GitLab-provided details for Plane</div>
++            <div className="pt-2.5 text-18 font-medium">GitLab-provided details for ZenithSpace</div>
+             {GITLAB_FORM_FIELDS.map((field) => (
+               <ControllerInput
+                 key={field.key}
+@@ -216,7 +216,7 @@ export function InstanceGitlabConfigForm(props: Props) {
+           </div>
+           <div className="col-span-2 md:col-span-1">
+             <div className="flex flex-col gap-y-4 px-6 pt-1.5 pb-4 bg-layer-3 rounded-lg">
+-              <div className="pt-2 text-18 font-medium">Plane-provided details for GitLab</div>
++              <div className="pt-2 text-18 font-medium">ZenithSpace-provided details for GitLab</div>
+               {GITLAB_SERVICE_FIELD.map((field) => (
+                 <CopyField key={field.key} label={field.label} url={field.url} description={field.description} />
+               ))}
+diff --git a/apps/admin/app/(all)/(dashboard)/authentication/google/form.tsx b/apps/admin/app/(all)/(dashboard)/authentication/google/form.tsx
+index f1310ae..34b77c2 100644
+--- a/apps/admin/app/(all)/(dashboard)/authentication/google/form.tsx
++++ b/apps/admin/app/(all)/(dashboard)/authentication/google/form.tsx
+@@ -187,7 +187,7 @@ export function InstanceGoogleConfigForm(props: Props) {
+       <div className="flex flex-col gap-8">
+         <div className="grid grid-cols-2 gap-x-12 gap-y-8 w-full">
+           <div className="flex flex-col gap-y-4 col-span-2 md:col-span-1 pt-1">
+-            <div className="pt-2.5 text-18 font-medium">Google-provided details for Plane</div>
++            <div className="pt-2.5 text-18 font-medium">Google-provided details for ZenithSpace</div>
+             {GOOGLE_FORM_FIELDS.map((field) => (
+               <ControllerInput
+                 key={field.key}
+@@ -220,7 +220,7 @@ export function InstanceGoogleConfigForm(props: Props) {
+             </div>
+           </div>
+           <div className="col-span-2 md:col-span-1 flex flex-col gap-y-6">
+-            <div className="pt-2 text-18 font-medium">Plane-provided details for Google</div>
++            <div className="pt-2 text-18 font-medium">ZenithSpace-provided details for Google</div>
+ 
+             <div className="flex flex-col gap-y-4">
+               {/* common service details */}
+diff --git a/apps/admin/app/(all)/(dashboard)/authentication/page.tsx b/apps/admin/app/(all)/(dashboard)/authentication/page.tsx
+index 65d1f0b..85eab4e 100644
+--- a/apps/admin/app/(all)/(dashboard)/authentication/page.tsx
++++ b/apps/admin/app/(all)/(dashboard)/authentication/page.tsx
+@@ -169,6 +169,6 @@ const InstanceAuthenticationPage = observer(function InstanceAuthenticationPage(
+   );
+ });
+ 
+-export const meta: Route.MetaFunction = () => [{ title: "Authentication Settings - Plane Web" }];
++export const meta: Route.MetaFunction = () => [{ title: "Authentication Settings - ZenithSpace Web" }];
+ 
+ export default InstanceAuthenticationPage;
+diff --git a/apps/admin/app/(all)/(dashboard)/email/page.tsx b/apps/admin/app/(all)/(dashboard)/email/page.tsx
+index e74b34b..7c80368 100644
+--- a/apps/admin/app/(all)/(dashboard)/email/page.tsx
++++ b/apps/admin/app/(all)/(dashboard)/email/page.tsx
+@@ -63,7 +63,7 @@ const InstanceEmailPage = observer(function InstanceEmailPage(_props: Route.Comp
+         title: "Secure emails from your own instance",
+         description: (
+           <>
+-            Plane can send useful emails to you and your users from your own instance without talking to the Internet.
++            ZenithSpace can send useful emails to you and your users from your own instance without talking to the Internet.
+             <div className="text-13 font-regular text-tertiary">
+               Set it up below and please test your settings before you save them.&nbsp;
+               <span className="text-danger-primary">Misconfigs can lead to email bounces and errors.</span>
+diff --git a/apps/admin/app/(all)/(dashboard)/general/form.tsx b/apps/admin/app/(all)/(dashboard)/general/form.tsx
+index a090959..f00aa18 100644
+--- a/apps/admin/app/(all)/(dashboard)/general/form.tsx
++++ b/apps/admin/app/(all)/(dashboard)/general/form.tsx
+@@ -122,9 +122,9 @@ export const GeneralConfigurationForm = observer(function GeneralConfigurationFo
+               </div>
+             </div>
+             <div className="grow">
+-              <div className="text-13 font-medium text-primary leading-5">Let Plane collect anonymous usage data</div>
++              <div className="text-13 font-medium text-primary leading-5">Let ZenithSpace collect anonymous usage data</div>
+               <div className="text-11 font-regular text-tertiary leading-5">
+-                No PII is collected.This anonymized data is used to understand how you use Plane and build new features
++                No PII is collected.This anonymized data is used to understand how you use ZenithSpace and build new features
+                 in line with{" "}
+                 <a
+                   href="https://developers.plane.so/self-hosting/telemetry"
+diff --git a/apps/admin/app/(all)/(dashboard)/sidebar-help-section.tsx b/apps/admin/app/(all)/(dashboard)/sidebar-help-section.tsx
+index 9ee63f3..998eb3c 100644
+--- a/apps/admin/app/(all)/(dashboard)/sidebar-help-section.tsx
++++ b/apps/admin/app/(all)/(dashboard)/sidebar-help-section.tsx
+@@ -57,13 +57,13 @@ export const AdminSidebarHelpSection = observer(function AdminSidebarHelpSection
+       )}
+     >
+       <div className={`flex items-center gap-1 ${isSidebarCollapsed ? "flex-col justify-center" : "w-full"}`}>
+-        <Tooltip tooltipContent="Redirect to Plane" position="right" className="ml-4" disabled={!isSidebarCollapsed}>
++        <Tooltip tooltipContent="Redirect to ZenithSpace" position="right" className="ml-4" disabled={!isSidebarCollapsed}>
+           <a
+             href={redirectionLink}
+             className={`relative px-2 py-1 flex items-center gap-1 rounded-sm bg-layer-1 text-body-xs-medium text-secondary whitespace-nowrap`}
+           >
+             <NewTabIcon width={14} height={14} />
+-            {!isSidebarCollapsed && "Redirect to Plane"}
++            {!isSidebarCollapsed && "Redirect to ZenithSpace"}
+           </a>
+         </Tooltip>
+         <Tooltip tooltipContent="Help" position={isSidebarCollapsed ? "right" : "top"} className="ml-4">
+diff --git a/apps/admin/app/(all)/(home)/page.tsx b/apps/admin/app/(all)/(home)/page.tsx
+index 014e880..94b8f17 100644
+--- a/apps/admin/app/(all)/(home)/page.tsx
++++ b/apps/admin/app/(all)/(home)/page.tsx
+@@ -46,5 +46,5 @@ export default observer(HomePage);
+ 
+ export const meta: Route.MetaFunction = () => [
+   { title: "Admin – Instance Setup & Sign-In" },
+-  { name: "description", content: "Configure your Plane instance or sign in to the admin portal." },
++  { name: "description", content: "Configure your ZenithSpace instance or sign in to the admin portal." },
+ ];
+diff --git a/apps/admin/app/(all)/(home)/sign-in-form.tsx b/apps/admin/app/(all)/(home)/sign-in-form.tsx
+index e850d19..735266c 100644
+--- a/apps/admin/app/(all)/(home)/sign-in-form.tsx
++++ b/apps/admin/app/(all)/(home)/sign-in-form.tsx
+@@ -114,7 +114,7 @@ export function InstanceSignInForm() {
+       <div className="flex flex-col justify-center items-center flex-grow w-full py-6 mt-10">
+         <div className="relative flex flex-col gap-6 max-w-[22.5rem] w-full">
+           <FormHeader
+-            heading="Manage your Plane instance"
++            heading="Manage your ZenithSpace instance"
+             subHeading="Configure instance-wide settings to secure your instance"
+           />
+           <form
+diff --git a/apps/admin/app/root.tsx b/apps/admin/app/root.tsx
+index 3627aa8..801e7c3 100644
+--- a/apps/admin/app/root.tsx
++++ b/apps/admin/app/root.tsx
+@@ -22,7 +22,7 @@ import interVariableWoff2 from "@fontsource-variable/inter/files/inter-latin-wgh
+ import "@fontsource/material-symbols-rounded";
+ import "@fontsource/ibm-plex-mono";
+ 
+-const APP_TITLE = "Plane | Simple, extensible, open-source project management tool.";
++const APP_TITLE = "ZenithSpace | Simple, extensible, open-source project management tool.";
+ const APP_DESCRIPTION =
+   "Open-source project management tool to manage work items, sprints, and product roadmaps with peace of mind.";
+ 
+@@ -64,13 +64,13 @@ export const meta: Route.MetaFunction = () => [
+   { name: "description", content: APP_DESCRIPTION },
+   { property: "og:title", content: APP_TITLE },
+   { property: "og:description", content: APP_DESCRIPTION },
+-  { property: "og:url", content: "https://plane.so/" },
++  { property: "og:url", content: "https://zenithspace.so/" },
+   {
+     name: "keywords",
+     content:
+       "software development, customer feedback, software, accelerate, code management, release management, project management, work items tracking, agile, scrum, kanban, collaboration",
+   },
+-  { name: "twitter:site", content: "@planepowers" },
++  { name: "twitter:site", content: "@zenithspace" },
+ ];
+ 
+ export default function Root() {
+diff --git a/apps/admin/components/common/new-user-popup.tsx b/apps/admin/components/common/new-user-popup.tsx
+index d9e33a9..d3a93d1 100644
+--- a/apps/admin/components/common/new-user-popup.tsx
++++ b/apps/admin/components/common/new-user-popup.tsx
+@@ -29,7 +29,7 @@ export const NewUserPopup = observer(function NewUserPopup() {
+         <div className="grow">
+           <div className="text-14 font-semibold">Create workspace</div>
+           <div className="py-2 text-13 font-medium text-tertiary">
+-            Instance setup done! Welcome to Plane instance portal. Start your journey with by creating your first
++            Instance setup done! Welcome to ZenithSpace instance portal. Start your journey with by creating your first
+             workspace.
+           </div>
+           <div className="flex items-center gap-4 pt-2">
+@@ -46,7 +46,7 @@ export const NewUserPopup = observer(function NewUserPopup() {
+             src={resolveGeneralTheme(resolvedTheme) === "dark" ? TakeoffIconDark : TakeoffIconLight}
+             height={80}
+             width={80}
+-            alt="Plane icon"
++            alt="ZenithSpace icon"
+           />
+         </div>
+       </div>
+diff --git a/apps/admin/components/common/page-header.tsx b/apps/admin/components/common/page-header.tsx
+index eafc4e9..bbea227 100644
+--- a/apps/admin/components/common/page-header.tsx
++++ b/apps/admin/components/common/page-header.tsx
+@@ -10,7 +10,7 @@ type TPageHeader = {
+ };
+ 
+ export function PageHeader(props: TPageHeader) {
+-  const { title = "God Mode - Plane", description = "Plane god mode" } = props;
++  const { title = "God Mode - ZenithSpace", description = "ZenithSpace god mode" } = props;
+ 
+   return (
+     <>
+diff --git a/apps/admin/components/instance/instance-not-ready.tsx b/apps/admin/components/instance/instance-not-ready.tsx
+index 5789869..e76bfad 100644
+--- a/apps/admin/components/instance/instance-not-ready.tsx
++++ b/apps/admin/components/instance/instance-not-ready.tsx
+@@ -14,8 +14,8 @@ export function InstanceNotReady() {
+     <div className="h-full w-full relative container px-5 mx-auto flex justify-center items-center">
+       <div className="w-auto max-w-2xl relative space-y-8 py-10">
+         <div className="relative flex flex-col justify-center items-center space-y-4">
+-          <h1 className="text-24 font-bold pb-3">Welcome aboard Plane!</h1>
+-          <img src={PlaneTakeOffImage} alt="Plane Logo" />
++          <h1 className="text-24 font-bold pb-3">Welcome aboard ZenithSpace!</h1>
++          <img src={PlaneTakeOffImage} alt="ZenithSpace Logo" />
+           <p className="font-medium text-14 text-placeholder">Get started by setting up your instance and workspace</p>
+         </div>
+ 
+diff --git a/apps/admin/components/instance/setup-form.tsx b/apps/admin/components/instance/setup-form.tsx
+index 4295413..5cb4b33 100644
+--- a/apps/admin/components/instance/setup-form.tsx
++++ b/apps/admin/components/instance/setup-form.tsx
+@@ -142,8 +142,8 @@ export function InstanceSetupForm() {
+       <div className="flex flex-col justify-center items-center flex-grow w-full py-6 mt-10">
+         <div className="relative flex flex-col gap-6 max-w-[22.5rem] w-full">
+           <FormHeader
+-            heading="Setup your Plane Instance"
+-            subHeading="Post setup you will be able to manage this Plane instance."
++            heading="Setup your ZenithSpace Instance"
++            subHeading="Post setup you will be able to manage this ZenithSpace instance."
+           />
+           {errorData.type &&
+             errorData?.message &&
+@@ -352,7 +352,7 @@ export function InstanceSetupForm() {
+                 />
+               </div>
+               <label className="text-13 text-tertiary font-medium cursor-pointer" htmlFor="is_telemetry_enabled">
+-                Allow Plane to anonymously collect usage events.{" "}
++                Allow ZenithSpace to anonymously collect usage events.{" "}
+                 <a
+                   tabIndex={-1}
+                   href="https://developers.plane.so/self-hosting/telemetry"
+diff --git a/apps/admin/hooks/oauth/core.tsx b/apps/admin/hooks/oauth/core.tsx
+index 9e6914e..9fb4350 100644
+--- a/apps/admin/hooks/oauth/core.tsx
++++ b/apps/admin/hooks/oauth/core.tsx
+@@ -37,7 +37,7 @@ export const getCoreAuthenticationModesMap: (
+     key: "unique-codes",
+     name: "Unique codes",
+     description:
+-      "Log in or sign up for Plane using codes sent via email. You need to have set up SMTP to use this method.",
++      "Log in or sign up for ZenithSpace using codes sent via email. You need to have set up SMTP to use this method.",
+     icon: <Mails className="h-6 w-6 p-0.5 text-tertiary" />,
+     config: <EmailCodesConfiguration disabled={disabled} updateConfig={updateConfig} />,
+     enabledConfigKey: "ENABLE_MAGIC_LINK_LOGIN",
+@@ -53,7 +53,7 @@ export const getCoreAuthenticationModesMap: (
+   google: {
+     key: "google",
+     name: "Google",
+-    description: "Allow members to log in or sign up for Plane with their Google accounts.",
++    description: "Allow members to log in or sign up for ZenithSpace with their Google accounts.",
+     icon: <img src={googleLogo} height={20} width={20} alt="Google Logo" />,
+     config: <GoogleConfiguration disabled={disabled} updateConfig={updateConfig} />,
+     enabledConfigKey: "IS_GOOGLE_ENABLED",
+@@ -61,7 +61,7 @@ export const getCoreAuthenticationModesMap: (
+   github: {
+     key: "github",
+     name: "GitHub",
+-    description: "Allow members to log in or sign up for Plane with their GitHub accounts.",
++    description: "Allow members to log in or sign up for ZenithSpace with their GitHub accounts.",
+     icon: (
+       <img
+         src={resolvedTheme === "dark" ? githubDarkModeImage : githubLightModeImage}
+@@ -76,7 +76,7 @@ export const getCoreAuthenticationModesMap: (
+   gitlab: {
+     key: "gitlab",
+     name: "GitLab",
+-    description: "Allow members to log in or sign up to plane with their GitLab accounts.",
++    description: "Allow members to log in or sign up to ZenithSpace with their GitLab accounts.",
+     icon: <img src={gitlabLogo} height={20} width={20} alt="GitLab Logo" />,
+     config: <GitlabConfiguration disabled={disabled} updateConfig={updateConfig} />,
+     enabledConfigKey: "IS_GITLAB_ENABLED",
+@@ -84,7 +84,7 @@ export const getCoreAuthenticationModesMap: (
+   gitea: {
+     key: "gitea",
+     name: "Gitea",
+-    description: "Allow members to log in or sign up to plane with their Gitea accounts.",
++    description: "Allow members to log in or sign up to ZenithSpace with their Gitea accounts.",
+     icon: <img src={giteaLogo} height={20} width={20} alt="Gitea Logo" />,
+     config: <GiteaConfiguration disabled={disabled} updateConfig={updateConfig} />,
+     enabledConfigKey: "IS_GITEA_ENABLED",
+diff --git a/apps/admin/hooks/use-sidebar-menu/core.ts b/apps/admin/hooks/use-sidebar-menu/core.ts
+index 9d4e449..d63caee 100644
+--- a/apps/admin/hooks/use-sidebar-menu/core.ts
++++ b/apps/admin/hooks/use-sidebar-menu/core.ts
+@@ -45,7 +45,7 @@ export const coreSidebarMenuLinks: Record<TCoreSidebarMenuKey, TSidebarMenuItem>
+   },
+   image: {
+     Icon: Image,
+-    name: "Images in Plane",
++    name: "Images in ZenithSpace",
+     description: "Allow third-party image libraries.",
+     href: `/image/`,
+   },
+diff --git a/apps/admin/package.json b/apps/admin/package.json
+index 96e7ad2..d505dab 100644
+--- a/apps/admin/package.json
++++ b/apps/admin/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "admin",
+-  "description": "Admin UI for Plane",
++  "description": "Admin UI for ZenithSpace",
+   "version": "1.2.0",
+   "license": "AGPL-3.0",
+   "private": true,
+diff --git a/apps/admin/public/site.webmanifest.json b/apps/admin/public/site.webmanifest.json
+index 6e5e438..6624377 100644
+--- a/apps/admin/public/site.webmanifest.json
++++ b/apps/admin/public/site.webmanifest.json
+@@ -1,7 +1,7 @@
+ {
+-  "name": "Plane God Mode",
+-  "short_name": "Plane God Mode",
+-  "description": "Plane helps you plan your issues, cycles, and product modules.",
++  "name": "ZenithSpace God Mode",
++  "short_name": "ZenithSpace God Mode",
++  "description": "ZenithSpace helps you plan your issues, cycles, and product modules.",
+   "start_url": ".",
+   "display": "standalone",
+   "background_color": "#f9fafb",
+diff --git a/apps/api/plane/app/views/search/base.py b/apps/api/plane/app/views/search/base.py
+index 3bfbeca..03e977c 100644
+--- a/apps/api/plane/app/views/search/base.py
++++ b/apps/api/plane/app/views/search/base.py
+@@ -330,7 +330,6 @@ class SearchEndpoint(BaseAPIView):
+                             q,
+                             is_active=True,
+                             workspace__slug=slug,
+-                            member__is_bot=False,
+                             project_id=project_id,
+                         )
+                         .annotate(
+@@ -542,7 +541,6 @@ class SearchEndpoint(BaseAPIView):
+                             q,
+                             is_active=True,
+                             workspace__slug=slug,
+-                            member__is_bot=False,
+                         )
+                         .annotate(
+                             member__avatar_url=Case(
+diff --git a/apps/space/README.md b/apps/space/README.md
+index fc22981..bf67df9 100644
+--- a/apps/space/README.md
++++ b/apps/space/README.md
+@@ -2,9 +2,9 @@
+ 
+ <p align="center">
+ <a href="https://plane.so">
+-  <img src="https://plane-marketing.s3.ap-south-1.amazonaws.com/plane-readme/plane_logo_.webp" alt="Plane Logo" width="70">
++  <img src="https://plane-marketing.s3.ap-south-1.amazonaws.com/plane-readme/plane_logo_.webp" alt="ZenithSpace Logo" width="70">
+ </a>
+ </p>
+ 
+-<h3 align="center"><b>Plane Space</b></h3>
++<h3 align="center"><b>ZenithSpace</b></h3>
+ <p align="center"><b>Open-source, self-hosted project planning tool</b></p>
+diff --git a/apps/space/app/error.tsx b/apps/space/app/error.tsx
+index 3050a89..f1d0502 100644
+--- a/apps/space/app/error.tsx
++++ b/apps/space/app/error.tsx
+@@ -18,10 +18,10 @@ function ErrorPage() {
+         <div className="space-y-2">
+           <h3 className="text-16 font-semibold">Yikes! That doesn{"'"}t look good.</h3>
+           <p className="mx-auto md:w-1/2 text-13 text-secondary">
+-            That crashed Plane, pun intended. No worries, though. Our engineers have been notified. If you have more
++            That crashed ZenithSpace, pun intended. No worries, though. Our engineers have been notified. If you have more
+             details, please write to{" "}
+-            <a href="mailto:support@plane.so" className="text-accent-primary">
+-              support@plane.so
++            <a href="mailto:support@zenithspace.so" className="text-accent-primary">
++              support@zenithspace.so
+             </a>{" "}
+             or on our{" "}
+             <a
+diff --git a/apps/space/app/issues/[anchor]/layout.tsx b/apps/space/app/issues/[anchor]/layout.tsx
+index 1c82e03..0cd2bd0 100644
+--- a/apps/space/app/issues/[anchor]/layout.tsx
++++ b/apps/space/app/issues/[anchor]/layout.tsx
+@@ -19,8 +19,8 @@ import { usePublish, usePublishList } from "@/hooks/store/publish";
+ import { useIssueFilter } from "@/hooks/store/use-issue-filter";
+ import type { Route } from "./+types/layout";
+ 
+-const DEFAULT_TITLE = "Plane";
+-const DEFAULT_DESCRIPTION = "Made with Plane, an AI-powered work management platform with publishing capabilities.";
++const DEFAULT_TITLE = "ZenithSpace";
++const DEFAULT_DESCRIPTION = "Made with ZenithSpace, an AI-powered work management platform with publishing capabilities.";
+ 
+ interface IssueMetadata {
+   name?: string;
+diff --git a/apps/space/app/root.tsx b/apps/space/app/root.tsx
+index de13a13..3adcb6f 100644
+--- a/apps/space/app/root.tsx
++++ b/apps/space/app/root.tsx
+@@ -25,8 +25,8 @@ import interVariableWoff2 from "@fontsource-variable/inter/files/inter-latin-wgh
+ import "@fontsource/material-symbols-rounded";
+ import "@fontsource/ibm-plex-mono";
+ 
+-const APP_TITLE = "Plane Publish | Make your Plane boards public with one-click";
+-const APP_DESCRIPTION = "Plane Publish is a customer feedback management tool built on top of plane.so";
++const APP_TITLE = "ZenithSpace Publish | Make your ZenithSpace boards public with one-click";
++const APP_DESCRIPTION = "ZenithSpace Publish is a customer feedback management tool built on top of ZenithSpace";
+ 
+ export const links: Route.LinksFunction = () => [
+   { rel: "apple-touch-icon", sizes: "180x180", href: appleTouchIcon },
+@@ -75,13 +75,13 @@ export const meta: Route.MetaFunction = () => [
+   { name: "description", content: APP_DESCRIPTION },
+   { property: "og:title", content: APP_TITLE },
+   { property: "og:description", content: APP_DESCRIPTION },
+-  { property: "og:url", content: "https://sites.plane.so/" },
++  { property: "og:url", content: "https://sites.zenithspace.so/" },
+   {
+     name: "keywords",
+     content:
+       "software development, customer feedback, software, accelerate, code management, release management, project management, work item tracking, agile, scrum, kanban, collaboration",
+   },
+-  { name: "twitter:site", content: "@planepowers" },
++  { name: "twitter:site", content: "@zenithspace" },
+ ];
+ 
+ export default function Root() {
+diff --git a/apps/space/core/components/account/auth-forms/auth-header.tsx b/apps/space/core/components/account/auth-forms/auth-header.tsx
+index 20df0cb..b743a84 100644
+--- a/apps/space/core/components/account/auth-forms/auth-header.tsx
++++ b/apps/space/core/components/account/auth-forms/auth-header.tsx
+@@ -27,7 +27,7 @@ const Titles: TAuthHeaderDetails = {
+   },
+   [EAuthModes.SIGN_UP]: {
+     header: "View, comment, and do more",
+-    subHeader: "Sign up or log in to work with Plane work items and Pages.",
++    subHeader: "Sign up or log in to work with ZenithSpace work items and Pages.",
+   },
+ };
+ 
+@@ -41,7 +41,7 @@ export function AuthHeader(props: TAuthHeader) {
+ 
+     return {
+       header: "Comment or react to work items",
+-      subHeader: "Use plane to add your valuable inputs to features.",
++      subHeader: "Use ZenithSpace to add your valuable inputs to features.",
+     };
+   };
+ 
+diff --git a/apps/space/core/components/common/powered-by.tsx b/apps/space/core/components/common/powered-by.tsx
+index af64cae..bc8eade 100644
+--- a/apps/space/core/components/common/powered-by.tsx
++++ b/apps/space/core/components/common/powered-by.tsx
+@@ -27,7 +27,7 @@ export function PoweredBy(props: TPoweredBy) {
+     >
+       <PlaneLogo className="h-3 w-auto text-primary" />
+       <div className="text-11">
+-        Powered by <span className="font-semibold">Plane Publish</span>
++        Powered by <span className="font-semibold">ZenithSpace Publish</span>
+       </div>
+     </a>
+   );
+diff --git a/apps/space/core/components/instance/instance-failure-view.tsx b/apps/space/core/components/instance/instance-failure-view.tsx
+index bc4e153..d517f00 100644
+--- a/apps/space/core/components/instance/instance-failure-view.tsx
++++ b/apps/space/core/components/instance/instance-failure-view.tsx
+@@ -23,7 +23,7 @@ export function InstanceFailureView() {
+     <div className="relative h-screen overflow-x-hidden overflow-y-auto container px-5 mx-auto flex justify-center items-center">
+       <div className="w-auto max-w-2xl relative space-y-8 py-10">
+         <div className="relative flex flex-col justify-center items-center space-y-4">
+-          <img src={instanceImage} alt="Plane instance failure image" />
++          <img src={instanceImage} alt="ZenithSpace instance failure image" />
+           <h3 className="font-medium text-20 text-on-color ">Unable to fetch instance details.</h3>
+           <p className="font-medium text-14 text-center">
+             We were unable to fetch the details of the instance. <br />
+diff --git a/apps/space/core/lib/instance-provider.tsx b/apps/space/core/lib/instance-provider.tsx
+index 7ec9bfa..1c7ab7a 100644
+--- a/apps/space/core/lib/instance-provider.tsx
++++ b/apps/space/core/lib/instance-provider.tsx
+@@ -58,7 +58,7 @@ export const InstanceProvider = observer(function InstanceProvider({ children }:
+             </div>
+           </div>
+           <div className="absolute inset-0 z-0">
+-            <img src={patternBackground} className="w-screen h-full object-cover" alt="Plane background pattern" />
++            <img src={patternBackground} className="w-screen h-full object-cover" alt="ZenithSpace background pattern" />
+           </div>
+           <div className="relative z-10 flex-grow">
+             <div className="relative h-full w-full overflow-y-auto px-6 py-10 mx-auto flex justify-center items-center">
+diff --git a/apps/space/public/site.webmanifest.json b/apps/space/public/site.webmanifest.json
+index 8885d13..64eef8e 100644
+--- a/apps/space/public/site.webmanifest.json
++++ b/apps/space/public/site.webmanifest.json
+@@ -1,7 +1,7 @@
+ {
+-  "name": "Plane Space",
+-  "short_name": "Plane Space",
+-  "description": "Plane helps you plan your work items, cycles, and product modules.",
++  "name": "ZenithSpace",
++  "short_name": "ZenithSpace",
++  "description": "ZenithSpace helps you plan your work items, cycles, and product modules.",
+   "start_url": ".",
+   "display": "standalone",
+   "background_color": "#f9fafb",
+diff --git a/apps/web/app/(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/intake/page.tsx b/apps/web/app/(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/intake/page.tsx
+index 4125ce3..653b07a 100644
+--- a/apps/web/app/(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/intake/page.tsx
++++ b/apps/web/app/(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/intake/page.tsx
+@@ -67,7 +67,7 @@ function ProjectInboxPage({ params }: Route.ComponentProps) {
+         workspace: currentProjectDetails?.name,
+       })
+     : t("inbox_issue.page_label", {
+-        workspace: "Plane",
++        workspace: "ZenithSpace",
+       });
+ 
+   const currentNavigationTab = navigationTab
+diff --git a/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/header.tsx b/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/header.tsx
+new file mode 100644
+index 0000000..1ba890b
+--- /dev/null
++++ b/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/header.tsx
+@@ -0,0 +1,39 @@
++/**
++ * Copyright (c) 2023-present Plane Software, Inc. and contributors
++ * SPDX-License-Identifier: AGPL-3.0-only
++ * See the LICENSE file for details.
++ */
++
++import { observer } from "mobx-react";
++// plane imports
++import { WORKSPACE_SETTINGS } from "@plane/constants";
++import { Breadcrumbs } from "@plane/ui";
++// components
++import { BreadcrumbLink } from "@/components/common/breadcrumb-link";
++import { SettingsPageHeader } from "@/components/settings/page-header";
++import { WORKSPACE_SETTINGS_ICONS } from "@/components/settings/workspace/sidebar/item-icon";
++
++export const AIAgentWorkspaceSettingsHeader = observer(function AIAgentWorkspaceSettingsHeader() {
++  // derived values
++  const settingsDetails = WORKSPACE_SETTINGS["ai-agent"];
++  const Icon = WORKSPACE_SETTINGS_ICONS["ai-agent"];
++
++  return (
++    <SettingsPageHeader
++      leftItem={
++        <div className="flex items-center gap-2">
++          <Breadcrumbs>
++            <Breadcrumbs.Item
++              component={
++                <BreadcrumbLink
++                  label="AI Agent"
++                  icon={<Icon className="size-4 text-tertiary" />}
++                />
++              }
++            />
++          </Breadcrumbs>
++        </div>
++      }
++    />
++  );
++});
+diff --git a/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/page.tsx b/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/page.tsx
+new file mode 100644
+index 0000000..cc9e3e9
+--- /dev/null
++++ b/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/page.tsx
+@@ -0,0 +1,47 @@
++/**
++ * Copyright (c) 2023-present Plane Software, Inc. and contributors
++ * SPDX-License-Identifier: AGPL-3.0-only
++ * See the LICENSE file for details.
++ */
++
++import { observer } from "mobx-react";
++import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
++// components
++import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
++import { PageHead } from "@/components/core/page-title";
++import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
++import { AIAgentSettings } from "@/components/workspace/settings/ai-agent";
++// hooks
++import { useWorkspace } from "@/hooks/store/use-workspace";
++import { useUserPermissions } from "@/hooks/store/user";
++// local imports
++import { AIAgentWorkspaceSettingsHeader } from "./header";
++
++function AIAgentPage() {
++  // store hooks
++  const { workspaceUserInfo, allowPermissions } = useUserPermissions();
++  const { currentWorkspace } = useWorkspace();
++
++  // derived values
++  const canPerformWorkspaceAdminActions = allowPermissions(
++    [EUserPermissions.ADMIN],
++    EUserPermissionsLevel.WORKSPACE
++  );
++  const pageTitle = currentWorkspace?.name
++    ? `${currentWorkspace.name} - AI Agent`
++    : undefined;
++
++  // if user is not authorized to view this page
++  if (workspaceUserInfo && !canPerformWorkspaceAdminActions) {
++    return <NotAuthorizedView section="settings" className="h-auto" />;
++  }
++
++  return (
++    <SettingsContentWrapper header={<AIAgentWorkspaceSettingsHeader />}>
++      <PageHead title={pageTitle} />
++      <AIAgentSettings />
++    </SettingsContentWrapper>
++  );
++}
++
++export default observer(AIAgentPage);
+diff --git a/apps/web/app/(all)/accounts/forgot-password/layout.tsx b/apps/web/app/(all)/accounts/forgot-password/layout.tsx
+index f503c81..1df7565 100644
+--- a/apps/web/app/(all)/accounts/forgot-password/layout.tsx
++++ b/apps/web/app/(all)/accounts/forgot-password/layout.tsx
+@@ -11,4 +11,4 @@ export default function ForgotPasswordLayout() {
+   return <Outlet />;
+ }
+ 
+-export const meta: Route.MetaFunction = () => [{ title: "Forgot Password - Plane" }];
++export const meta: Route.MetaFunction = () => [{ title: "Forgot Password - ZenithSpace" }];
+diff --git a/apps/web/app/(all)/accounts/reset-password/layout.tsx b/apps/web/app/(all)/accounts/reset-password/layout.tsx
+index d3955da..8595af7 100644
+--- a/apps/web/app/(all)/accounts/reset-password/layout.tsx
++++ b/apps/web/app/(all)/accounts/reset-password/layout.tsx
+@@ -11,4 +11,4 @@ export default function ResetPasswordLayout() {
+   return <Outlet />;
+ }
+ 
+-export const meta: Route.MetaFunction = () => [{ title: "Reset Password - Plane" }];
++export const meta: Route.MetaFunction = () => [{ title: "Reset Password - ZenithSpace" }];
+diff --git a/apps/web/app/(all)/accounts/set-password/layout.tsx b/apps/web/app/(all)/accounts/set-password/layout.tsx
+index 4455b84..a9eda84 100644
+--- a/apps/web/app/(all)/accounts/set-password/layout.tsx
++++ b/apps/web/app/(all)/accounts/set-password/layout.tsx
+@@ -11,4 +11,4 @@ export default function SetPasswordLayout() {
+   return <Outlet />;
+ }
+ 
+-export const meta: Route.MetaFunction = () => [{ title: "Set Password - Plane" }];
++export const meta: Route.MetaFunction = () => [{ title: "Set Password - ZenithSpace" }];
+diff --git a/apps/web/app/(all)/sign-up/layout.tsx b/apps/web/app/(all)/sign-up/layout.tsx
+index 97a8147..68e121b 100644
+--- a/apps/web/app/(all)/sign-up/layout.tsx
++++ b/apps/web/app/(all)/sign-up/layout.tsx
+@@ -8,7 +8,7 @@ import { Outlet } from "react-router";
+ import type { Route } from "./+types/layout";
+ 
+ export const meta: Route.MetaFunction = () => [
+-  { title: "Sign up - Plane" },
++  { title: "Sign up - ZenithSpace" },
+   { name: "robots", content: "index, nofollow" },
+ ];
+ 
+diff --git a/apps/web/app/layout.tsx b/apps/web/app/layout.tsx
+index ab41f06..81a95e4 100644
+--- a/apps/web/app/layout.tsx
++++ b/apps/web/app/layout.tsx
+@@ -25,7 +25,7 @@ import icon512 from "@/app/assets/icons/icon-512x512.png?url";
+ import { AppProvider } from "./provider";
+ 
+ export const meta = () => [
+-  { title: "Plane | Simple, extensible, open-source project management tool." },
++  { title: "ZenithSpace | Simple, extensible, open-source project management tool." },
+   { name: "description", content: SITE_DESCRIPTION },
+   {
+     name: "keywords",
+@@ -37,7 +37,7 @@ export const meta = () => [
+     content:
+       "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover",
+   },
+-  { property: "og:title", content: "Plane | Simple, extensible, open-source project management tool." },
++  { property: "og:title", content: "ZenithSpace | Simple, extensible, open-source project management tool." },
+   {
+     property: "og:description",
+     content: "Open-source project management tool to manage work items, cycles, and product roadmaps easily",
+@@ -67,7 +67,7 @@ export default function RootLayout({ children }: { children: React.ReactNode })
+         <link rel="manifest" href="/site.webmanifest.json" />
+         <link rel="shortcut icon" href={faviconIco} />
+         {/* Meta info for PWA */}
+-        <meta name="application-name" content="Plane" />
++        <meta name="application-name" content="ZenithSpace" />
+         <meta name="apple-mobile-web-app-capable" content="yes" />
+         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+         <meta name="apple-mobile-web-app-title" content={SITE_NAME} />
+diff --git a/apps/web/app/root.tsx b/apps/web/app/root.tsx
+index 1125cab..54d4f9b 100644
+--- a/apps/web/app/root.tsx
++++ b/apps/web/app/root.tsx
+@@ -34,7 +34,7 @@ import interVariableWoff2 from "@fontsource-variable/inter/files/inter-latin-wgh
+ import "@fontsource/material-symbols-rounded";
+ import "@fontsource/ibm-plex-mono";
+ 
+-const APP_TITLE = "Plane | Simple, extensible, open-source project management tool.";
++const APP_TITLE = "ZenithSpace | Simple, extensible, open-source project management tool.";
+ 
+ export const links: LinksFunction = () => [
+   { rel: "icon", type: "image/png", sizes: "32x32", href: favicon32 },
+@@ -65,7 +65,7 @@ export function Layout({ children }: { children: ReactNode }) {
+         <meta name="viewport" content="width=device-width, initial-scale=1" />
+         <meta name="theme-color" content="#fff" />
+         {/* Meta info for PWA */}
+-        <meta name="application-name" content="Plane" />
++        <meta name="application-name" content="ZenithSpace" />
+         <meta name="apple-mobile-web-app-capable" content="yes" />
+         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+         <meta name="apple-mobile-web-app-title" content={SITE_NAME} />
+diff --git a/apps/web/app/routes/core.ts b/apps/web/app/routes/core.ts
+index c9c82bd..bf8ac36 100644
+--- a/apps/web/app/routes/core.ts
++++ b/apps/web/app/routes/core.ts
+@@ -282,6 +282,10 @@ export const coreRoutes: RouteConfigEntry[] = [
+             ":workspaceSlug/settings/webhooks/:webhookId",
+             "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/webhooks/[webhookId]/page.tsx"
+           ),
++          route(
++            ":workspaceSlug/settings/ai-agent",
++            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/ai-agent/page.tsx"
++          ),
+         ]),
+ 
+         // --------------------------------------------------------------------
+diff --git a/apps/web/core/components/settings/workspace/sidebar/item-icon.tsx b/apps/web/core/components/settings/workspace/sidebar/item-icon.tsx
+index b89c11f..db1d6e9 100644
+--- a/apps/web/core/components/settings/workspace/sidebar/item-icon.tsx
++++ b/apps/web/core/components/settings/workspace/sidebar/item-icon.tsx
+@@ -5,7 +5,7 @@
+  */
+ 
+ import type { LucideIcon } from "lucide-react";
+-import { ArrowUpToLine, Building, CreditCard, Users, Webhook } from "lucide-react";
++import { ArrowUpToLine, Bot, Building, CreditCard, Users, Webhook } from "lucide-react";
+ // plane imports
+ import type { ISvgIcons } from "@plane/propel/icons";
+ import type { TWorkspaceSettingsTabs } from "@plane/types";
+@@ -16,4 +16,5 @@ export const WORKSPACE_SETTINGS_ICONS: Record<TWorkspaceSettingsTabs, LucideIcon
+   export: ArrowUpToLine,
+   "billing-and-plans": CreditCard,
+   webhooks: Webhook,
++  "ai-agent": Bot,
+ };
+diff --git a/apps/web/core/components/workspace/settings/ai-agent.tsx b/apps/web/core/components/workspace/settings/ai-agent.tsx
+new file mode 100644
+index 0000000..594a695
+--- /dev/null
++++ b/apps/web/core/components/workspace/settings/ai-agent.tsx
+@@ -0,0 +1,356 @@
++/**
++ * Copyright (c) 2023-present Plane Software, Inc. and contributors
++ * SPDX-License-Identifier: AGPL-3.0-only
++ * See the LICENSE file for details.
++ */
++
++import { useCallback, useEffect, useState } from "react";
++import { observer } from "mobx-react";
++// plane imports
++import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
++import { Button } from "@plane/propel/button";
++import { TOAST_TYPE, setToast } from "@plane/propel/toast";
++import { Input, CustomSelect } from "@plane/ui";
++import { cn } from "@plane/utils";
++// hooks
++import { useUserPermissions } from "@/hooks/store/user";
++
++// -----------------------------------------------------------------------------
++// Types
++// -----------------------------------------------------------------------------
++type TAgentMode = "disabled" | "comment_only" | "autonomous";
++
++interface IAIAgentConfig {
++  oauth_token: string;
++  agent_mode: TAgentMode;
++}
++
++const ORCHESTRATOR_BASE_URL = "https://orchestrator.zenova.id";
++
++const AGENT_MODE_OPTIONS: { value: TAgentMode; label: string; description: string }[] = [
++  {
++    value: "disabled",
++    label: "Disabled",
++    description: "AI Agent is turned off and will not respond to any events.",
++  },
++  {
++    value: "comment_only",
++    label: "Comment Only",
++    description: "AI Agent will only post comments on issues. No autonomous actions.",
++  },
++  {
++    value: "autonomous",
++    label: "Autonomous",
++    description: "AI Agent can create branches, write code, and open pull requests.",
++  },
++];
++
++// -----------------------------------------------------------------------------
++// Helpers
++// -----------------------------------------------------------------------------
++
++/** Mask all but the last 4 characters of a token string. */
++function maskToken(token: string): string {
++  if (token.length <= 4) return token;
++  return "\u2022".repeat(token.length - 4) + token.slice(-4);
++}
++
++// -----------------------------------------------------------------------------
++// Component
++// -----------------------------------------------------------------------------
++
++export const AIAgentSettings = observer(function AIAgentSettings() {
++  // ---------------------------------------------------------------------------
++  // Permission check
++  // ---------------------------------------------------------------------------
++  const { allowPermissions } = useUserPermissions();
++  const isAdmin = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE);
++
++  // ---------------------------------------------------------------------------
++  // Form state
++  // ---------------------------------------------------------------------------
++  const [oauthToken, setOauthToken] = useState("");
++  const [oauthTokenMasked, setOauthTokenMasked] = useState("");
++  const [agentMode, setAgentMode] = useState<TAgentMode>("disabled");
++  const [isSaving, setIsSaving] = useState(false);
++  const [isLoading, setIsLoading] = useState(true);
++
++  // Connection status
++  const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "checking">("disconnected");
++  const [isTesting, setIsTesting] = useState(false);
++
++  // Track whether the user has typed a new token (so we know to send it)
++  const [tokenDirty, setTokenDirty] = useState(false);
++
++  // ---------------------------------------------------------------------------
++  // Fetch existing config on mount
++  // ---------------------------------------------------------------------------
++  const fetchConfig = useCallback(async () => {
++    setIsLoading(true);
++    try {
++      const response = await fetch(`${ORCHESTRATOR_BASE_URL}/api/config`);
++      if (!response.ok) throw new Error("Failed to fetch config");
++      const data = (await response.json()) as IAIAgentConfig;
++
++      setAgentMode(data.agent_mode ?? "disabled");
++
++      // The API should never return the raw token; it returns a masked version.
++      if (data.oauth_token) {
++        setOauthTokenMasked(maskToken(data.oauth_token));
++        setConnectionStatus("connected");
++      } else {
++        setOauthTokenMasked("");
++        setConnectionStatus("disconnected");
++      }
++    } catch {
++      // If the orchestrator is unreachable we just start with defaults.
++      setConnectionStatus("disconnected");
++    } finally {
++      setIsLoading(false);
++    }
++  }, []);
++
++  useEffect(() => {
++    void fetchConfig();
++  }, [fetchConfig]);
++
++  // ---------------------------------------------------------------------------
++  // Save config
++  // ---------------------------------------------------------------------------
++  const handleSave = async () => {
++    setIsSaving(true);
++
++    const payload: Record<string, string> = {
++      agent_mode: agentMode,
++    };
++
++    // Only send the token when the user has explicitly changed it.
++    if (tokenDirty && oauthToken.length > 0) {
++      payload.oauth_token = oauthToken;
++    }
++
++    try {
++      const response = await fetch(`${ORCHESTRATOR_BASE_URL}/api/config`, {
++        method: "PUT",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify(payload),
++      });
++
++      if (!response.ok) throw new Error("Failed to save config");
++
++      setToast({
++        type: TOAST_TYPE.SUCCESS,
++        title: "Success!",
++        message: "AI Agent configuration saved successfully.",
++      });
++
++      // After saving, re-fetch so the masked token is up-to-date.
++      setTokenDirty(false);
++      setOauthToken("");
++      await fetchConfig();
++    } catch {
++      setToast({
++        type: TOAST_TYPE.ERROR,
++        title: "Error!",
++        message: "Failed to save AI Agent configuration. Please try again.",
++      });
++    } finally {
++      setIsSaving(false);
++    }
++  };
++
++  // ---------------------------------------------------------------------------
++  // Test connection / health-check
++  // ---------------------------------------------------------------------------
++  const handleTestConnection = async () => {
++    setIsTesting(true);
++    setConnectionStatus("checking");
++
++    try {
++      const response = await fetch(`${ORCHESTRATOR_BASE_URL}/health`, {
++        method: "GET",
++      });
++
++      if (response.ok) {
++        setConnectionStatus("connected");
++        setToast({
++          type: TOAST_TYPE.SUCCESS,
++          title: "Connection successful",
++          message: "The orchestrator at orchestrator.zenova.id is reachable.",
++        });
++      } else {
++        throw new Error("Health check failed");
++      }
++    } catch {
++      setConnectionStatus("disconnected");
++      setToast({
++        type: TOAST_TYPE.ERROR,
++        title: "Connection failed",
++        message: "Unable to reach the orchestrator. Check your network and try again.",
++      });
++    } finally {
++      setIsTesting(false);
++    }
++  };
++
++  // ---------------------------------------------------------------------------
++  // Render
++  // ---------------------------------------------------------------------------
++  if (isLoading) {
++    return (
++      <div className="flex items-center justify-center py-10">
++        <p className="text-body-sm-regular text-tertiary">Loading AI Agent settings...</p>
++      </div>
++    );
++  }
++
++  return (
++    <div className={cn("w-full flex flex-col gap-y-8", { "opacity-60": !isAdmin })}>
++      {/* ------------------------------------------------------------------ */}
++      {/* Section heading                                                     */}
++      {/* ------------------------------------------------------------------ */}
++      <div className="flex flex-col gap-1">
++        <h3 className="text-h5-semibold">AI Agent</h3>
++        <p className="text-body-sm-regular text-tertiary">
++          Configure the ZenithSpace AI Agent that can triage issues, write code, and open pull requests on your behalf.
++        </p>
++      </div>
++
++      {/* ------------------------------------------------------------------ */}
++      {/* Connection Status                                                   */}
++      {/* ------------------------------------------------------------------ */}
++      <div className="flex flex-col gap-2">
++        <h4 className="text-body-sm-medium text-tertiary">Connection Status</h4>
++        <div className="flex items-center gap-3">
++          <span className="flex items-center gap-2">
++            <span
++              className={cn("inline-block size-2.5 rounded-full", {
++                "bg-green-500": connectionStatus === "connected",
++                "bg-red-500": connectionStatus === "disconnected",
++                "bg-yellow-500 animate-pulse": connectionStatus === "checking",
++              })}
++            />
++            <span className="text-body-sm-regular">
++              {connectionStatus === "connected" && "Connected to orchestrator"}
++              {connectionStatus === "disconnected" && "Disconnected"}
++              {connectionStatus === "checking" && "Checking connection..."}
++            </span>
++          </span>
++          <Button
++            variant="secondary"
++            size="lg"
++            onClick={() => void handleTestConnection()}
++            loading={isTesting}
++            disabled={!isAdmin || isTesting}
++          >
++            {isTesting ? "Testing..." : "Test Connection"}
++          </Button>
++        </div>
++      </div>
++
++      {/* ------------------------------------------------------------------ */}
++      {/* OAuth Token Input                                                   */}
++      {/* ------------------------------------------------------------------ */}
++      <div className="flex flex-col gap-2">
++        <h4 className="text-body-sm-medium text-tertiary">Claude API / OAuth Token</h4>
++        <p className="text-caption-sm-regular text-tertiary">
++          Provide the API token used to authenticate with the Claude API. The token is stored encrypted on the
++          orchestrator.
++        </p>
++        <div className="flex items-center gap-3">
++          <div className="w-full max-w-md">
++            <Input
++              id="oauth-token"
++              name="oauth_token"
++              type="password"
++              value={tokenDirty ? oauthToken : oauthTokenMasked}
++              onChange={(e) => {
++                if (!tokenDirty) setTokenDirty(true);
++                setOauthToken(e.target.value);
++              }}
++              placeholder="sk-ant-..."
++              className="w-full rounded-md"
++              disabled={!isAdmin}
++              autoComplete="off"
++            />
++          </div>
++        </div>
++      </div>
++
++      {/* ------------------------------------------------------------------ */}
++      {/* Agent Mode Selector                                                 */}
++      {/* ------------------------------------------------------------------ */}
++      <div className="flex flex-col gap-2">
++        <h4 className="text-body-sm-medium text-tertiary">Agent Mode</h4>
++        <p className="text-caption-sm-regular text-tertiary">
++          Choose how the AI Agent interacts with your workspace.
++        </p>
++        <div className="w-full max-w-md">
++          <CustomSelect
++            value={agentMode}
++            onChange={(val: TAgentMode) => setAgentMode(val)}
++            label={AGENT_MODE_OPTIONS.find((o) => o.value === agentMode)?.label ?? "Select a mode"}
++            buttonClassName="border border-subtle bg-layer-2 !shadow-none !rounded-md"
++            input
++            disabled={!isAdmin}
++          >
++            {AGENT_MODE_OPTIONS.map((option) => (
++              <CustomSelect.Option key={option.value} value={option.value}>
++                <div className="flex flex-col">
++                  <span className="text-body-sm-medium">{option.label}</span>
++                  <span className="text-caption-sm-regular text-tertiary">{option.description}</span>
++                </div>
++              </CustomSelect.Option>
++            ))}
++          </CustomSelect>
++        </div>
++
++        {/* Inline radio-style display for quick visual scanning */}
++        <div className="mt-2 flex flex-col gap-3">
++          {AGENT_MODE_OPTIONS.map((option) => (
++            <label
++              key={option.value}
++              className={cn(
++                "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors",
++                agentMode === option.value
++                  ? "border-accent-primary bg-accent-primary/5"
++                  : "border-subtle bg-layer-2 hover:bg-layer-2-hover",
++                { "pointer-events-none": !isAdmin }
++              )}
++            >
++              <input
++                type="radio"
++                name="agent_mode"
++                value={option.value}
++                checked={agentMode === option.value}
++                onChange={() => setAgentMode(option.value)}
++                className="mt-0.5 size-4 accent-accent-primary"
++                disabled={!isAdmin}
++              />
++              <div className="flex flex-col">
++                <span className="text-body-sm-medium">{option.label}</span>
++                <span className="text-caption-sm-regular text-tertiary">{option.description}</span>
++              </div>
++            </label>
++          ))}
++        </div>
++      </div>
++
++      {/* ------------------------------------------------------------------ */}
++      {/* Save Button                                                         */}
++      {/* ------------------------------------------------------------------ */}
++      {isAdmin && (
++        <div className="flex items-center justify-between py-2">
++          <Button
++            variant="primary"
++            size="lg"
++            onClick={() => void handleSave()}
++            loading={isSaving}
++          >
++            {isSaving ? "Saving..." : "Save Changes"}
++          </Button>
++        </div>
++      )}
++    </div>
++  );
++});
+diff --git a/apps/web/public/manifest.json b/apps/web/public/manifest.json
+index 3591773..88f1252 100644
+--- a/apps/web/public/manifest.json
++++ b/apps/web/public/manifest.json
+@@ -1,6 +1,6 @@
+ {
+-  "name": "Plane",
+-  "short_name": "Plane",
++  "name": "ZenithSpace",
++  "short_name": "ZenithSpace",
+   "icons": [
+     {
+       "src": "/icons/icon-192x192.png",
+diff --git a/apps/web/public/site.webmanifest.json b/apps/web/public/site.webmanifest.json
+index 7f53eaa..fc0ef37 100644
+--- a/apps/web/public/site.webmanifest.json
++++ b/apps/web/public/site.webmanifest.json
+@@ -1,7 +1,7 @@
+ {
+-  "name": "Plane",
+-  "short_name": "Plane",
+-  "description": "Plane helps you plan your issues, cycles, and product modules.",
++  "name": "ZenithSpace",
++  "short_name": "ZenithSpace",
++  "description": "ZenithSpace helps you plan your issues, cycles, and product modules.",
+   "start_url": ".",
+   "display": "standalone",
+   "background_color": "#f9fafb",
+diff --git a/apps/web/styles/globals.css b/apps/web/styles/globals.css
+index ab520ab..3abdf3b 100644
+--- a/apps/web/styles/globals.css
++++ b/apps/web/styles/globals.css
+@@ -41,14 +41,14 @@
+   --editor-colors-purple-background: #e3d8fd;
+ }
+ [data-theme*="dark"] {
+-  --editor-colors-gray-background: #404144;
+-  --editor-colors-peach-background: #593032;
+-  --editor-colors-pink-background: #562e3d;
+-  --editor-colors-orange-background: #583e2a;
+-  --editor-colors-green-background: #1d4a3b;
+-  --editor-colors-light-blue-background: #1f495c;
+-  --editor-colors-dark-blue-background: #223558;
+-  --editor-colors-purple-background: #3d325a;
++  --editor-colors-gray-background: #1a1a1a;
++  --editor-colors-peach-background: #1a0505;
++  --editor-colors-pink-background: #1a0510;
++  --editor-colors-orange-background: #1a0f05;
++  --editor-colors-green-background: #051a10;
++  --editor-colors-light-blue-background: #05101a;
++  --editor-colors-dark-blue-background: #050a1a;
++  --editor-colors-purple-background: #0f051a;
+ }
+ /* end background colors */
+ 
+diff --git a/packages/constants/src/metadata.ts b/packages/constants/src/metadata.ts
+index c44e441..0b5ce2d 100644
+--- a/packages/constants/src/metadata.ts
++++ b/packages/constants/src/metadata.ts
+@@ -4,20 +4,20 @@
+  * See the LICENSE file for details.
+  */
+ 
+-export const SITE_NAME = "Plane | Simple, extensible, open-source project management tool.";
+-export const SITE_TITLE = "Plane | Simple, extensible, open-source project management tool.";
++export const SITE_NAME = "ZenithSpace | AI-Native Project Management";
++export const SITE_TITLE = "ZenithSpace - AI-Native Project Management";
+ export const SITE_DESCRIPTION =
+-  "Open-source project management tool to manage work items, cycles, and product roadmaps easily";
++  "ZenithSpace is an AI-native project management platform to manage work items, cycles, and product roadmaps easily";
+ export const SITE_KEYWORDS =
+   "software development, plan, ship, software, accelerate, code management, release management, project management, work items tracking, agile, scrum, kanban, collaboration";
+-export const SITE_URL = "https://app.plane.so/";
+-export const TWITTER_USER_NAME = "Plane | Simple, extensible, open-source project management tool.";
++export const SITE_URL = "https://app.zenithspace.com/";
++export const TWITTER_USER_NAME = "ZenithSpace";
+ 
+-// Plane Sites Metadata
+-export const SPACE_SITE_NAME = "Plane Publish | Make your Plane boards and roadmaps pubic with just one-click. ";
+-export const SPACE_SITE_TITLE = "Plane Publish | Make your Plane boards public with one-click";
+-export const SPACE_SITE_DESCRIPTION = "Plane Publish is a customer feedback management tool built on top of plane.so";
++// ZenithSpace Spaces Metadata
++export const SPACE_SITE_NAME = "ZenithSpace Spaces | Make your boards and roadmaps public with just one click";
++export const SPACE_SITE_TITLE = "ZenithSpace Spaces | Make your boards public with one click";
++export const SPACE_SITE_DESCRIPTION = "ZenithSpace Spaces is a customer feedback management tool built on top of ZenithSpace";
+ export const SPACE_SITE_KEYWORDS =
+   "software development, customer feedback, software, accelerate, code management, release management, project management, work items tracking, agile, scrum, kanban, collaboration";
+-export const SPACE_SITE_URL = "https://app.plane.so/";
+-export const SPACE_TWITTER_USER_NAME = "planepowers";
++export const SPACE_SITE_URL = "https://app.zenithspace.com/";
++export const SPACE_TWITTER_USER_NAME = "ZenithSpace";
+diff --git a/packages/constants/src/settings/workspace.ts b/packages/constants/src/settings/workspace.ts
+index f6b9443..a708c96 100644
+--- a/packages/constants/src/settings/workspace.ts
++++ b/packages/constants/src/settings/workspace.ts
+@@ -56,6 +56,13 @@ export const WORKSPACE_SETTINGS: Record<TWorkspaceSettingsTabs, TWorkspaceSettin
+     access: [EUserWorkspaceRoles.ADMIN],
+     highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/settings/webhooks/`,
+   },
++  "ai-agent": {
++    key: "ai-agent",
++    i18n_label: "workspace_settings.settings.ai_agent.title",
++    href: `/settings/ai-agent`,
++    access: [EUserWorkspaceRoles.ADMIN],
++    highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/settings/ai-agent/`,
++  },
+ };
+ 
+ export const WORKSPACE_SETTINGS_ACCESS = Object.fromEntries(
+@@ -69,6 +76,6 @@ export const GROUPED_WORKSPACE_SETTINGS: Record<WORKSPACE_SETTINGS_CATEGORY, TWo
+     WORKSPACE_SETTINGS["billing-and-plans"],
+     WORKSPACE_SETTINGS["export"],
+   ],
+-  [WORKSPACE_SETTINGS_CATEGORY.FEATURES]: [],
++  [WORKSPACE_SETTINGS_CATEGORY.FEATURES]: [WORKSPACE_SETTINGS["ai-agent"]],
+   [WORKSPACE_SETTINGS_CATEGORY.DEVELOPER]: [WORKSPACE_SETTINGS["webhooks"]],
+ };
+diff --git a/packages/i18n/src/locales/en/translations.ts b/packages/i18n/src/locales/en/translations.ts
+index 5df71b2..da13611 100644
+--- a/packages/i18n/src/locales/en/translations.ts
++++ b/packages/i18n/src/locales/en/translations.ts
+@@ -1576,6 +1576,9 @@ export default {
+           },
+         },
+       },
++      ai_agent: {
++        title: "AI Agent",
++      },
+       api_tokens: {
+         title: "Personal Access Tokens",
+         add_token: "Add personal access token",
+diff --git a/packages/tailwind-config/variables.css b/packages/tailwind-config/variables.css
+index 2a3fed9..4636be0 100644
+--- a/packages/tailwind-config/variables.css
++++ b/packages/tailwind-config/variables.css
+@@ -398,15 +398,15 @@
+ 
+     /* ---------- Dark mode color tokens ---------- */
+     @variant dark {
+-      /* Neutral colors */
+-      --neutral-black: oklch(0.1689 0.0021 230.81);
+-      --neutral-100: oklch(0.1932 0.002 230.81);
+-      --neutral-200: oklch(0.2158 0.0025 230.82);
+-      --neutral-300: oklch(0.2378 0.0029 230.83);
+-      --neutral-400: oklch(0.2593 0.0033 230.84);
+-      --neutral-500: oklch(0.3011 0.0041 230.85);
+-      --neutral-600: oklch(0.3415 0.0049 230.86);
+-      --neutral-700: oklch(0.3999 0.0059 230.87);
++      /* Neutral colors — true black theme (Linear-style) */
++      --neutral-black: oklch(0% 0 0);
++      --neutral-100: oklch(8% 0 0);
++      --neutral-200: oklch(12% 0 0);
++      --neutral-300: oklch(15% 0 0);
++      --neutral-400: oklch(18% 0 0);
++      --neutral-500: oklch(21% 0 0);
++      --neutral-600: oklch(24% 0 0);
++      --neutral-700: oklch(28% 0 0);
+       --neutral-800: oklch(0.5989 0.0096 230.88);
+       --neutral-900: oklch(0.6835 0.0074 230.81);
+       --neutral-1000: oklch(0.7655 0.0054 230.76);
+@@ -468,27 +468,27 @@
+       --scrollbar-thumb-surface-hover: var(--alpha-white-300);
+       --scrollbar-thumb-hover: var(--alpha-white-400);
+       --scrollbar-thumb-active: var(--alpha-white-500);
+-      /* Background colors */
+-      --bg-canvas: var(--neutral-black);
+-      --bg-surface-1: var(--neutral-100);
+-      --bg-surface-2: var(--neutral-200);
+-      --bg-layer-1: var(--neutral-200);
+-      --bg-layer-1-hover: var(--neutral-300);
+-      --bg-layer-1-active: var(--neutral-400);
+-      --bg-layer-1-selected: var(--neutral-400);
+-      --bg-layer-2: var(--neutral-300);
+-      --bg-layer-2-hover: var(--neutral-400);
+-      --bg-layer-2-active: var(--neutral-500);
+-      --bg-layer-2-selected: var(--neutral-500);
+-      --bg-layer-3: var(--neutral-400);
+-      --bg-layer-3-hover: var(--neutral-500);
+-      --bg-layer-3-active: var(--neutral-600);
+-      --bg-layer-3-selected: var(--neutral-600);
++      /* Background colors — true black surfaces */
++      --bg-canvas: oklch(0% 0 0);
++      --bg-surface-1: oklch(8% 0 0);
++      --bg-surface-2: oklch(10% 0 0);
++      --bg-layer-1: oklch(10% 0 0);
++      --bg-layer-1-hover: oklch(13% 0 0);
++      --bg-layer-1-active: oklch(16% 0 0);
++      --bg-layer-1-selected: oklch(16% 0 0);
++      --bg-layer-2: oklch(12% 0 0);
++      --bg-layer-2-hover: oklch(15% 0 0);
++      --bg-layer-2-active: oklch(18% 0 0);
++      --bg-layer-2-selected: oklch(18% 0 0);
++      --bg-layer-3: oklch(15% 0 0);
++      --bg-layer-3-hover: oklch(18% 0 0);
++      --bg-layer-3-active: oklch(21% 0 0);
++      --bg-layer-3-selected: oklch(21% 0 0);
+       --bg-layer-transparent: var(--alpha-black-0);
+       --bg-layer-transparent-hover: var(--alpha-white-100);
+       --bg-layer-transparent-active: var(--alpha-white-200);
+       --bg-layer-transparent-selected: var(--alpha-white-300);
+-      --bg-layer-disabled: var(--neutral-700);
++      --bg-layer-disabled: oklch(22% 0 0);
+       --bg-accent-primary: var(--brand-default);
+       --bg-accent-primary-hover: var(--brand-500);
+       --bg-accent-primary-active: var(--brand-400);
+@@ -627,18 +627,18 @@
+       --label-purple-text: var(--extended-color-purple-400);
+       --label-purple-border: var(--extended-color-purple-400);
+       --label-purple-focus: var(--extended-color-purple-300);
+-      /* Illustration colors */
+-      --illustration-fill-primary: var(--neutral-400);
+-      --illustration-fill-secondary: var(--neutral-500);
+-      --illustration-fill-tertiary: var(--neutral-700);
+-      --illustration-fill-quaternary: var(--neutral-700);
++      /* Illustration colors — darkened proportionally */
++      --illustration-fill-primary: oklch(15% 0 0);
++      --illustration-fill-secondary: oklch(18% 0 0);
++      --illustration-fill-tertiary: oklch(24% 0 0);
++      --illustration-fill-quaternary: oklch(24% 0 0);
+       --illustration-stroke-primary: var(--neutral-700);
+       --illustration-stroke-secondary: var(--neutral-800);
+       --illustration-stroke-tertiary: var(--neutral-1000);
+       /* Neutral plan colors */
+       --txt-plans-neutral-primary: var(--neutral-1000);
+       --txt-plans-neutral-color: var(--neutral-100);
+-      --bg-plans-neutral-subtle: var(--neutral-500);
++      --bg-plans-neutral-subtle: oklch(18% 0 0);
+       --bg-plans-neutral-solid: var(--neutral-1100);
+       /* Brand plan colors */
+       --txt-plans-brand-primary: var(--brand-1000);
+diff --git a/packages/types/src/settings.ts b/packages/types/src/settings.ts
+index 7eb994d..5b9f66b 100644
+--- a/packages/types/src/settings.ts
++++ b/packages/types/src/settings.ts
+@@ -10,7 +10,7 @@ import type { EUserWorkspaceRoles } from "./workspace";
+ 
+ export type TProfileSettingsTabs = "general" | "preferences" | "activity" | "notifications" | "security" | "api-tokens";
+ 
+-export type TWorkspaceSettingsTabs = "general" | "members" | "billing-and-plans" | "export" | "webhooks";
++export type TWorkspaceSettingsTabs = "general" | "members" | "billing-and-plans" | "export" | "webhooks" | "ai-agent";
+ export type TWorkspaceSettingsItem = {
+   key: TWorkspaceSettingsTabs;
+   i18n_label: string;
+-- 
+2.43.0
+
