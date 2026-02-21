@@ -19,9 +19,9 @@ export declare class ProgressReporter {
     postThinkingComment(): Promise<string | null>;
     /** Handle a parsed stream event from the Claude CLI */
     handleEvent(event: ParsedStreamEvent): Promise<void>;
-    /** Mark all in-progress activities as complete and update the progress comment to "Complete" */
+    /** Mark all in-progress activities as complete and update the single comment with the final response */
     finalize(finalResponse: string, actor?: string): Promise<void>;
-    /** Post error and clean up */
+    /** Update the single comment with error details and clean up */
     finalizeError(error: string): Promise<void>;
     private markCurrentComplete;
     private scheduleUpdate;

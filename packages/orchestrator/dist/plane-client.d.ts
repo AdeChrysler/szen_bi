@@ -1,8 +1,24 @@
 export declare class PlaneClient {
     private baseUrl;
     private apiToken;
-    constructor(baseUrl: string, apiToken: string);
+    private botApiToken?;
+    constructor(baseUrl: string, apiToken: string, opts?: {
+        botApiToken?: string;
+    });
+    /**
+     * Set the bot user API token used for comment operations.
+     * When set, addComment / addCommentHtml / updateComment will
+     * authenticate as the bot user so comments appear under its name
+     * (e.g. "ZenithSpace Agent") instead of the workspace admin.
+     */
+    setBotToken(token: string): void;
     private headers;
+    /**
+     * Headers used for comment operations. Uses the bot API token when
+     * available so that comments are attributed to the bot user; falls
+     * back to the main workspace API token for backwards compatibility.
+     */
+    private commentHeaders;
     private url;
     getIssue(workspaceSlug: string, projectId: string, issueId: string): Promise<any>;
     getComments(workspaceSlug: string, projectId: string, issueId: string): Promise<Array<{

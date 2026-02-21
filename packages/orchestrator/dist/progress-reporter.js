@@ -1,5 +1,5 @@
 import { toolDisplayName } from './stream-parser.js';
-import { formatProgressComment, formatThinkingComment, formatFinalResponse, formatErrorComment } from './comment-format.js';
+import { formatProgressComment, formatThinkingComment, formatFinalCombinedComment, formatErrorCombinedComment } from './comment-format.js';
 const THROTTLE_MS = 7_000; // Max 1 Plane API call per 7 seconds
 export class ProgressReporter {
     plane;
@@ -96,7 +96,7 @@ export class ProgressReporter {
             }
         }
     }
-    /** Mark all in-progress activities as complete and update the progress comment to "Complete" */
+    /** Mark all in-progress activities as complete and update the single comment with the final response */
     async finalize(finalResponse, actor) {
         this.clearThrottle();
         // Mark remaining activities as complete
@@ -104,47 +104,67 @@ export class ProgressReporter {
             if (!a.completed)
                 a.completed = true;
         }
-        // Update progress comment to show "Complete"
+        // Update the existing progress comment to include the final response
+        // This keeps everything in a single comment instead of posting a separate one
+        const html = formatFinalCombinedComment(this.activities, finalResponse, actor);
         if (this.progressCommentId) {
             try {
-                const html = formatProgressComment(this.activities, 'complete');
                 await this.plane.updateComment(this.workspace, this.projectId, this.issueId, this.progressCommentId, html);
+                console.log(`[progress] Updated comment ${this.progressCommentId} with final response`);
             }
             catch (err) {
-                console.error(`[progress] Failed to update progress comment:`, err);
+                console.error(`[progress] Failed to update comment with final response, posting new comment:`, err);
+                // Fallback: post as a new comment if the update fails
+                try {
+                    await this.plane.addCommentHtml(this.workspace, this.projectId, this.issueId, html, { external_source: 'zenova-agent', external_id: `response-${this.sessionId}` });
+                }
+                catch (err2) {
+                    console.error(`[progress] Fallback comment post also failed:`, err2);
+                }
             }
         }
-        // Post separate final response comment
-        try {
-            const html = formatFinalResponse(finalResponse, actor);
-            await this.plane.addCommentHtml(this.workspace, this.projectId, this.issueId, html, { external_source: 'zenova-agent', external_id: `response-${this.sessionId}` });
-        }
-        catch (err) {
-            console.error(`[progress] Failed to post final response:`, err);
+        else {
+            // No progress comment was created (e.g. postThinkingComment failed), post a new one
+            try {
+                await this.plane.addCommentHtml(this.workspace, this.projectId, this.issueId, html, { external_source: 'zenova-agent', external_id: `response-${this.sessionId}` });
+            }
+            catch (err) {
+                console.error(`[progress] Failed to post final response (no progress comment):`, err);
+            }
         }
         await this.sessionManager.setFinalResponse(this.sessionId, finalResponse);
         await this.sessionManager.updateState(this.sessionId, 'complete');
     }
-    /** Post error and clean up */
+    /** Update the single comment with error details and clean up */
     async finalizeError(error) {
         this.clearThrottle();
-        // Update progress comment to show error
+        // Update the existing progress comment to show the error
+        // This keeps everything in a single comment instead of posting a separate one
+        const html = formatErrorCombinedComment(this.activities, error);
         if (this.progressCommentId) {
             try {
-                const html = formatProgressComment(this.activities, 'error');
                 await this.plane.updateComment(this.workspace, this.projectId, this.issueId, this.progressCommentId, html);
+                console.log(`[progress] Updated comment ${this.progressCommentId} with error`);
             }
             catch (err) {
-                console.error(`[progress] Failed to update progress comment on error:`, err);
+                console.error(`[progress] Failed to update comment with error, posting new comment:`, err);
+                // Fallback: post as a new comment if the update fails
+                try {
+                    await this.plane.addCommentHtml(this.workspace, this.projectId, this.issueId, html, { external_source: 'zenova-agent', external_id: `error-${this.sessionId}` });
+                }
+                catch (err2) {
+                    console.error(`[progress] Fallback error comment post also failed:`, err2);
+                }
             }
         }
-        // Post error comment
-        try {
-            const html = formatErrorComment(error);
-            await this.plane.addCommentHtml(this.workspace, this.projectId, this.issueId, html, { external_source: 'zenova-agent', external_id: `error-${this.sessionId}` });
-        }
-        catch (err) {
-            console.error(`[progress] Failed to post error comment:`, err);
+        else {
+            // No progress comment was created, post a new one
+            try {
+                await this.plane.addCommentHtml(this.workspace, this.projectId, this.issueId, html, { external_source: 'zenova-agent', external_id: `error-${this.sessionId}` });
+            }
+            catch (err) {
+                console.error(`[progress] Failed to post error comment (no progress comment):`, err);
+            }
         }
         await this.sessionManager.setError(this.sessionId, error);
     }

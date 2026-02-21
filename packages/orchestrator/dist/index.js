@@ -1,13 +1,61 @@
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
+import { cors } from 'hono/cors';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { randomUUID, createHmac, timingSafeEqual } from 'crypto';
+import { readFileSync, writeFileSync, existsSync as fsExists, mkdirSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { TaskQueue } from './queue.js';
 import { ContainerManager } from './docker.js';
 import { PlaneClient } from './plane-client.js';
 import { SessionManager, InMemorySessionManager } from './agent-session.js';
 export const app = new Hono();
 app.use('*', logger());
+// CORS: allow requests from the Plane frontend at plane.zenova.id
+app.use('/api/config', cors({
+    origin: 'https://plane.zenova.id',
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type'],
+}));
+// ─── Agent config file helpers ──────────────────────────────────────────────
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const AGENT_CONFIG_DIR = resolve(__dirname, '..', 'data');
+const AGENT_CONFIG_PATH = resolve(AGENT_CONFIG_DIR, 'agent-config.json');
+const DEFAULT_AGENT_CONFIG = {
+    claudeApiToken: '',
+    agentMode: 'disabled',
+    updatedAt: '',
+};
+function readAgentConfig() {
+    try {
+        if (!fsExists(AGENT_CONFIG_PATH))
+            return { ...DEFAULT_AGENT_CONFIG };
+        const raw = readFileSync(AGENT_CONFIG_PATH, 'utf-8');
+        const parsed = JSON.parse(raw);
+        return {
+            claudeApiToken: parsed.claudeApiToken ?? '',
+            agentMode: parsed.agentMode ?? 'disabled',
+            updatedAt: parsed.updatedAt ?? '',
+        };
+    }
+    catch (err) {
+        console.error('[agent-config] Failed to read config:', err);
+        return { ...DEFAULT_AGENT_CONFIG };
+    }
+}
+function writeAgentConfig(config) {
+    if (!fsExists(AGENT_CONFIG_DIR)) {
+        mkdirSync(AGENT_CONFIG_DIR, { recursive: true });
+    }
+    writeFileSync(AGENT_CONFIG_PATH, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+}
+function maskToken(token) {
+    if (!token || token.length <= 8)
+        return token ? '********' : '';
+    return token.slice(0, 6) + '...' + token.slice(-4);
+}
 let dispatcher = null;
 let queue = null;
 let containers = null;
@@ -98,7 +146,6 @@ function verifyWebhookSignature(body, signature) {
     if (!signature)
         return false;
     const expected = createHmac('sha256', webhookSecret).update(body).digest('hex');
-    console.log(`[sig] received(${signature.length}): ${signature.slice(0, 16)}... expected(${expected.length}): ${expected.slice(0, 16)}...`);
     try {
         return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
     }
@@ -133,7 +180,6 @@ function normalizeCommentPayload(data) {
     // Plane sends workspace UUID, not slug — resolve it
     if (data.workspace && data.workspace.match(/^[0-9a-f]{8}-[0-9a-f]{4}-/)) {
         const slug = getWorkspaceSlug(data.workspace);
-        console.log(`[normalize] workspace UUID ${data.workspace} → slug "${slug}"`);
         data.workspace = slug;
     }
     // Extract comment_stripped from comment_html if missing
@@ -160,7 +206,7 @@ function isBotComment(comment) {
     }
     // Layer 3: Check content prefix patterns
     const text = comment.comment_stripped ?? comment.comment_html ?? '';
-    if (text.startsWith('🤖 Claude') || text.startsWith('🤖 **Claude')) {
+    if (text.startsWith('\u{1F916} Claude') || text.startsWith('\u{1F916} **Claude')) {
         console.log('[loop-prevention] Skipping: content starts with bot prefix');
         return true;
     }
@@ -188,8 +234,6 @@ async function buildSecrets(workspace, projectId) {
 }
 // ─── Comment handler (shared between webhook and debug) ─────────────────────
 async function handleCommentEvent(comment, skipDedup = false) {
-    // Debug: log the comment payload fields
-    console.log(`[webhook] comment payload: issue_id=${comment.issue_id} project=${comment.project} workspace=${comment.workspace} issue=${comment.issue}`);
     // Self-loop prevention
     if (isBotComment(comment)) {
         return { dispatched: false, skipped: true, reason: 'bot comment (self-loop prevention)' };
@@ -204,7 +248,6 @@ async function handleCommentEvent(comment, skipDedup = false) {
     const stripped = comment.comment_stripped?.trim()
         || rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const text = stripped.toLowerCase();
-    console.log(`[webhook] comment text: "${text.slice(0, 100)}"`);
     if (!plane)
         return { dispatched: false, error: 'not initialized' };
     // Check for follow-up: if there's an awaiting_input session for this issue
@@ -350,6 +393,46 @@ app.post('/api/validate-plane', async (c) => {
     }
     catch (err) {
         return c.json({ ok: false, error: String(err) }, 400);
+    }
+});
+// ============================================================
+// Agent Configuration API
+// ============================================================
+app.get('/api/config', (c) => {
+    const config = readAgentConfig();
+    return c.json({
+        claudeApiToken: maskToken(config.claudeApiToken),
+        agentMode: config.agentMode,
+        updatedAt: config.updatedAt,
+    });
+});
+app.post('/api/config', async (c) => {
+    try {
+        const body = await c.req.json();
+        // Validate agentMode if provided
+        const validModes = ['disabled', 'comment-only', 'autonomous'];
+        if (body.agentMode !== undefined && !validModes.includes(body.agentMode)) {
+            return c.json({ ok: false, error: `Invalid agentMode. Must be one of: ${validModes.join(', ')}` }, 400);
+        }
+        // Read existing config and merge
+        const existing = readAgentConfig();
+        const updated = {
+            claudeApiToken: body.claudeApiToken !== undefined ? body.claudeApiToken : existing.claudeApiToken,
+            agentMode: body.agentMode !== undefined ? body.agentMode : existing.agentMode,
+            updatedAt: new Date().toISOString(),
+        };
+        writeAgentConfig(updated);
+        console.log(`[agent-config] Updated: agentMode=${updated.agentMode}, token=${updated.claudeApiToken ? 'set' : 'empty'}`);
+        return c.json({
+            ok: true,
+            claudeApiToken: maskToken(updated.claudeApiToken),
+            agentMode: updated.agentMode,
+            updatedAt: updated.updatedAt,
+        });
+    }
+    catch (err) {
+        console.error('[agent-config] Save error:', err);
+        return c.json({ ok: false, error: String(err) }, 500);
     }
 });
 // ============================================================
@@ -781,9 +864,6 @@ app.post('/webhooks/plane', async (c) => {
     }
     const payload = JSON.parse(rawBody);
     console.log(`[webhook] ${payload.event}.${payload.action}`);
-    console.log(`[webhook] raw data keys: ${Object.keys(payload.data || {}).join(', ')}`);
-    const _d = payload.data ?? {};
-    console.log(`[webhook] data.issue_id=${_d.issue_id} data.issue=${_d.issue} data.project=${_d.project} data.workspace=${_d.workspace} data.workspace_detail=${JSON.stringify(_d.workspace_detail)?.slice(0, 100)}`);
     // ── Comment event: check for @claude mention ───────────────────────────────
     if ((payload.event === 'comment' || payload.event === 'issue_comment') && payload.action === 'created') {
         const comment = normalizeCommentPayload(payload.data);
@@ -939,7 +1019,7 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
     console.log(`[docker] Using socket: ${socketPath} (exists: ${existsSync(socketPath)})`);
     const docker = new Dockerode({ socketPath });
     const agents = loadAgentConfigs(process.env.AGENTS_CONFIG || './config/agents.yaml');
-    const planeClient = new PlaneClient(process.env.PLANE_API_URL || 'http://localhost:8000', process.env.PLANE_API_TOKEN || '');
+    const planeClient = new PlaneClient(process.env.PLANE_API_URL || 'http://localhost:8000', process.env.PLANE_API_TOKEN || '', { botApiToken: process.env.PLANE_BOT_API_TOKEN });
     init({
         dispatcher: new DispatcherClass(agents),
         queue: redis ? new TaskQueue(redis) : { enqueue: async () => { }, dequeue: async () => null, depth: async () => 0, peek: async () => [] },

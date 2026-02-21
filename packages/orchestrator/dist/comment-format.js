@@ -54,6 +54,32 @@ export function formatFinalResponse(response, actor) {
 export function formatErrorComment(error) {
     return `<p><strong>🤖 Claude — Error</strong></p><p>Something went wrong while processing this request:</p><pre><code>${escapeHtml(error.slice(0, 1000))}</code></pre>`;
 }
+/** Combined comment: completed progress steps + final response, all in one comment */
+export function formatFinalCombinedComment(activities, response, actor) {
+    const byLine = actor ? ` (requested by ${escapeHtml(actor)})` : '';
+    const header = `<p><strong>🤖 Claude — Complete${byLine}</strong></p>`;
+    let progressSection = '';
+    if (activities.length > 0) {
+        const items = activities.map(a => {
+            return `<li>✅ ${escapeHtml(a.label)}</li>`;
+        }).join('');
+        progressSection = `<details><summary>Activity log (${activities.length} steps)</summary><ul>${items}</ul></details>`;
+    }
+    return `${header}${progressSection}<hr>${md(response)}`;
+}
+/** Combined comment: completed progress steps + error, all in one comment */
+export function formatErrorCombinedComment(activities, error) {
+    const header = `<p><strong>🤖 Claude — Error</strong></p>`;
+    let progressSection = '';
+    if (activities.length > 0) {
+        const items = activities.map(a => {
+            const icon = a.completed ? '✅' : '❌';
+            return `<li>${icon} ${escapeHtml(a.label)}</li>`;
+        }).join('');
+        progressSection = `<details><summary>Activity log (${activities.length} steps)</summary><ul>${items}</ul></details>`;
+    }
+    return `${header}${progressSection}<p>Something went wrong while processing this request:</p><pre><code>${escapeHtml(error.slice(0, 1000))}</code></pre>`;
+}
 export function formatAwaitingInput(question) {
     return `<p><strong>🤖 Claude — Needs Input</strong></p>${md(question)}<p><em>Reply to this issue to continue the conversation.</em></p>`;
 }

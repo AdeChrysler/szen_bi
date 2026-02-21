@@ -76,6 +76,8 @@ services:
     command: ./bin/docker-entrypoint-api.sh
     environment:
       <<: *plane-env
+    volumes:
+      - ../plane/apps/api/plane/app/views/search/base.py:/code/plane/app/views/search/base.py:ro
     depends_on:
       plane-db:
         condition: service_healthy
@@ -115,7 +117,7 @@ services:
         condition: service_healthy
 
   plane-web:
-    image: makeplane/plane-frontend:latest
+    image: ${PLANE_FRONTEND_IMAGE:-makeplane/plane-frontend:latest}
     restart: unless-stopped
     depends_on:
       - plane-api
@@ -152,6 +154,8 @@ services:
       REDIS_URL: redis://redis:6379/1
       PLANE_API_URL: http://plane-api:8000
       PLANE_API_TOKEN: ${PLANE_API_TOKEN}
+      PLANE_BOT_API_TOKEN: ${PLANE_BOT_API_TOKEN:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
