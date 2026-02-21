@@ -148,6 +148,8 @@ async function buildSecrets(workspace, projectId) {
 }
 // ─── Comment handler (shared between webhook and debug) ─────────────────────
 async function handleCommentEvent(comment, skipDedup = false) {
+    // Debug: log the comment payload fields
+    console.log(`[webhook] comment payload: issue_id=${comment.issue_id} project=${comment.project} workspace=${comment.workspace} issue=${comment.issue}`);
     // Self-loop prevention
     if (isBotComment(comment)) {
         return { dispatched: false, skipped: true, reason: 'bot comment (self-loop prevention)' };
@@ -739,6 +741,9 @@ app.post('/webhooks/plane', async (c) => {
     }
     const payload = JSON.parse(rawBody);
     console.log(`[webhook] ${payload.event}.${payload.action}`);
+    console.log(`[webhook] raw data keys: ${Object.keys(payload.data || {}).join(', ')}`);
+    const _d = payload.data ?? {};
+    console.log(`[webhook] data.issue_id=${_d.issue_id} data.issue=${_d.issue} data.project=${_d.project} data.workspace=${_d.workspace} data.workspace_detail=${JSON.stringify(_d.workspace_detail)?.slice(0, 100)}`);
     // ── Comment event: check for @claude mention ───────────────────────────────
     if ((payload.event === 'comment' || payload.event === 'issue_comment') && payload.action === 'created') {
         const comment = payload.data;
