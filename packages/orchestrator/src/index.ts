@@ -913,42 +913,83 @@ app.post('/admin/api/settings/:workspace', async (c) => {
 
 app.post('/admin/api/create-bot', async (c) => {
   try {
-    const { execSync } = await import('child_process')
+    const Dockerode = (await import('dockerode')).default
+    const { existsSync } = await import('fs')
+    const socketPath = process.env.DOCKER_SOCKET ||
+      (existsSync('/var/run/docker.sock') ? '/var/run/docker.sock' :
+       existsSync('/run/docker.sock') ? '/run/docker.sock' : '/var/run/docker.sock')
+    const docker = new Dockerode({ socketPath })
 
-    // Find the plane-api container
-    const containers_out = execSync(
-      'docker ps --format "{{.Names}}" | grep -E "^api-" | head -1',
-      { encoding: 'utf-8', timeout: 10000 }
-    ).trim()
-
-    if (!containers_out) {
-      return c.json({ error: 'plane-api container not found' }, 404)
-    }
-
-    // Read the bot creation script
-    const scriptPath = resolve(__dirname, '..', '..', '..', 'scripts', 'create-bot-user.py')
-    let script: string
-    try {
-      script = readFileSync(scriptPath, 'utf-8')
-    } catch {
-      // Script might not be in the container at that path, embed it inline
-      script = readFileSync(resolve(__dirname, '..', 'scripts', 'create-bot-user.py'), 'utf-8')
-    }
-
-    // Execute via docker exec, piping the script into django shell
-    const result = execSync(
-      `docker exec -i ${containers_out} python manage.py shell`,
-      { input: script, encoding: 'utf-8', timeout: 30000, maxBuffer: 1024 * 1024 }
+    // Find the plane-api container (name pattern: api-*)
+    const allContainers = await docker.listContainers({ all: false })
+    const apiContainer = allContainers.find(
+      (c: any) => c.Names?.some((n: string) => n.replace(/^\//, '').startsWith('api-'))
     )
 
+    if (!apiContainer) {
+      return c.json({
+        error: 'plane-api container not found',
+        containers: allContainers.map((c: any) => c.Names).flat(),
+      }, 404)
+    }
+
+    const containerName = apiContainer.Names[0].replace(/^\//, '')
+
+    // Read the bot creation script
+    let script: string
+    const possiblePaths = [
+      resolve(__dirname, '..', 'scripts', 'create-bot-user.py'),
+      resolve(__dirname, '..', '..', '..', 'scripts', 'create-bot-user.py'),
+    ]
+    script = ''
+    for (const p of possiblePaths) {
+      try { script = readFileSync(p, 'utf-8'); break } catch {}
+    }
+    if (!script) {
+      return c.json({ error: 'Bot creation script not found', paths: possiblePaths }, 500)
+    }
+
+    // Use dockerode exec to pipe the script into the Django shell
+    const container = docker.getContainer(containerName)
+    const exec = await container.exec({
+      Cmd: ['python', 'manage.py', 'shell'],
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+    })
+
+    const stream = await exec.start({ hijack: true, stdin: true })
+
+    // Collect output
+    let output = ''
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        stream.destroy()
+        reject(new Error('Timeout after 30s'))
+      }, 30000)
+
+      stream.on('data', (chunk: Buffer) => { output += chunk.toString() })
+      stream.on('end', () => { clearTimeout(timeout); resolve() })
+      stream.on('error', (err: Error) => { clearTimeout(timeout); reject(err) })
+
+      // Write the script to stdin, then close stdin
+      stream.write(script)
+      stream.write('\n')
+      // Send EOF
+      setTimeout(() => {
+        try { (stream as any).end?.() } catch {}
+      }, 1000)
+    })
+
     // Parse the output to find the API token
-    const tokenMatch = result.match(/API token\s*:\s*(\S+)/)
+    const tokenMatch = output.match(/API token\s*:\s*(\S+)/)
     const token = tokenMatch ? tokenMatch[1] : null
 
     return c.json({
       success: true,
-      output: result,
+      output,
       botApiToken: token,
+      container: containerName,
     })
   } catch (err: any) {
     return c.json({
