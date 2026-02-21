@@ -310,9 +310,10 @@ async function handleCommentEvent(
     }
   }
 
-  // Check for @claude mention
-  if (!text.includes('@claude')) {
-    return { dispatched: false, skipped: true, reason: 'no @claude mention' }
+  // Check for @claude or @zenithspace mention
+  const mentionPattern = /@claude|@zenithspace\s*agent|@zenith/i
+  if (!mentionPattern.test(text)) {
+    return { dispatched: false, skipped: true, reason: 'no @claude or @zenithspace mention' }
   }
 
   try {
@@ -320,7 +321,7 @@ async function handleCommentEvent(
     const secrets = await buildSecrets(comment.workspace, comment.project)
 
     const { isActionRequest } = await import('./agent-runner.js')
-    const userQuestion = stripped.replace(/@claude\b/i, '').trim()
+    const userQuestion = stripped.replace(/@claude\b|@zenithspace\s*agent\b|@zenith\b/gi, '').trim()
     const autonomous = isActionRequest(userQuestion)
     const mode = autonomous ? 'autonomous' : 'comment'
 
