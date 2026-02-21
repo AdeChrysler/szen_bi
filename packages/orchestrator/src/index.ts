@@ -310,9 +310,10 @@ async function handleCommentEvent(
     }
   }
 
-  // Check for @claude or @zenithspace mention
+  // Check for @claude or @zenithspace mention (text-based or rich mention-component)
   const mentionPattern = /@claude|@zenithspace\s*agent|@zenith/i
-  if (!mentionPattern.test(text)) {
+  const hasMentionComponent = botUserId && rawHtml.includes(`entity_identifier="${botUserId}"`)
+  if (!mentionPattern.test(text) && !hasMentionComponent) {
     return { dispatched: false, skipped: true, reason: 'no @claude or @zenithspace mention' }
   }
 
