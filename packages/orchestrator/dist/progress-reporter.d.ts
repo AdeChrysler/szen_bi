@@ -1,5 +1,5 @@
 import type { PlaneClient } from './plane-client.js';
-import type { SessionManager } from './agent-session.js';
+import type { SessionManager, InMemorySessionManager } from './agent-session.js';
 import type { ParsedStreamEvent } from './stream-parser.js';
 export declare class ProgressReporter {
     private plane;
@@ -14,7 +14,7 @@ export declare class ProgressReporter {
     private pendingUpdate;
     private throttleTimer;
     private currentToolLabel;
-    constructor(plane: PlaneClient, sessionManager: SessionManager, sessionId: string, workspace: string, projectId: string, issueId: string);
+    constructor(plane: PlaneClient, sessionManager: SessionManager | InMemorySessionManager, sessionId: string, workspace: string, projectId: string, issueId: string);
     /** Post the initial "thinking" comment. Call this immediately on trigger. */
     postThinkingComment(): Promise<string | null>;
     /** Handle a parsed stream event from the Claude CLI */

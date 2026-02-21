@@ -1,5 +1,5 @@
 import { PlaneClient } from './plane-client.js';
-import { SessionManager } from './agent-session.js';
+import { SessionManager, InMemorySessionManager } from './agent-session.js';
 import type { QueuedTask, PlaneCommentPayload } from './types.js';
 export declare function isActionRequest(text: string): boolean;
 export interface RunAgentOpts {
@@ -7,7 +7,7 @@ export interface RunAgentOpts {
     issueDetails: any;
     secrets: Record<string, string>;
     plane: PlaneClient;
-    sessionManager: SessionManager;
+    sessionManager: SessionManager | InMemorySessionManager;
     mode: 'comment' | 'autonomous';
     followUpSessionId?: string;
 }

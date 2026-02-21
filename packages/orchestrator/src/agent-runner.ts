@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import Anthropic from '@anthropic-ai/sdk'
 import { PlaneClient } from './plane-client.js'
-import { SessionManager } from './agent-session.js'
+import { SessionManager, InMemorySessionManager } from './agent-session.js'
 import { ProgressReporter } from './progress-reporter.js'
 import { StreamParser } from './stream-parser.js'
 import type { QueuedTask, PlaneCommentPayload } from './types.js'
@@ -23,7 +23,7 @@ export interface RunAgentOpts {
   issueDetails: any
   secrets: Record<string, string>
   plane: PlaneClient
-  sessionManager: SessionManager
+  sessionManager: SessionManager | InMemorySessionManager
   mode: 'comment' | 'autonomous'
   followUpSessionId?: string   // parent session for follow-ups
 }

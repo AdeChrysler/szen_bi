@@ -5,7 +5,7 @@ import { randomUUID, createHmac, timingSafeEqual } from 'crypto';
 import { TaskQueue } from './queue.js';
 import { ContainerManager } from './docker.js';
 import { PlaneClient } from './plane-client.js';
-import { SessionManager } from './agent-session.js';
+import { SessionManager, InMemorySessionManager } from './agent-session.js';
 export const app = new Hono();
 app.use('*', logger());
 let dispatcher = null;
@@ -24,18 +24,23 @@ export function init(deps) {
     plane = deps.plane;
     webhookSecret = deps.webhookSecret ?? null;
     redisClient = deps.redis ?? null;
-    // Initialize session manager if Redis is available
+    // Initialize session manager — use Redis if available, otherwise in-memory
     if (redisClient) {
         sessionManager = new SessionManager(redisClient);
-        // Stale session cleanup every 5 minutes
-        staleCleanupTimer = setInterval(async () => {
-            if (!sessionManager)
-                return;
-            const cleaned = await sessionManager.cleanupStaleSessions();
-            if (cleaned > 0)
-                console.log(`[session] Cleaned up ${cleaned} stale sessions`);
-        }, 5 * 60 * 1000);
+        console.log('[session] Using Redis-backed session manager');
     }
+    else {
+        sessionManager = new InMemorySessionManager();
+        console.log('[session] Using in-memory session manager (no Redis)');
+    }
+    // Stale session cleanup every 5 minutes
+    staleCleanupTimer = setInterval(async () => {
+        if (!sessionManager)
+            return;
+        const cleaned = await sessionManager.cleanupStaleSessions();
+        if (cleaned > 0)
+            console.log(`[session] Cleaned up ${cleaned} stale sessions`);
+    }, 5 * 60 * 1000);
     // Load bot user ID from settings (set via admin or env)
     loadBotUserId().catch(() => { });
 }
@@ -378,18 +383,28 @@ app.get('/api/sessions/:id/stream', async (c) => {
 // ============================================================
 app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
 app.get('/status', async (c) => {
-    const activeSessions = sessionManager ? await sessionManager.getActiveSessions() : [];
-    return c.json({
-        running: containers?.getRunning() ?? [],
-        queueDepth: await queue?.depth() ?? 0,
-        activeSessions: activeSessions.map(s => ({
-            id: s.id,
-            issueId: s.issueId,
-            state: s.state,
-            mode: s.mode,
-            triggeredBy: s.triggeredBy,
-        })),
-    });
+    try {
+        const activeSessions = sessionManager ? await sessionManager.getActiveSessions() : [];
+        return c.json({
+            running: containers?.getRunning() ?? [],
+            queueDepth: await queue?.depth() ?? 0,
+            activeSessions: activeSessions.map(s => ({
+                id: s.id,
+                issueId: s.issueId,
+                state: s.state,
+                mode: s.mode,
+                triggeredBy: s.triggeredBy,
+            })),
+        });
+    }
+    catch (err) {
+        return c.json({
+            running: containers?.getRunning() ?? [],
+            queueDepth: 0,
+            activeSessions: [],
+            error: 'session data unavailable',
+        });
+    }
 });
 // ============================================================
 // Workspace Setup
@@ -845,7 +860,32 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
     const { default: Redis } = await import('ioredis');
     const { loadAgentConfigs, Dispatcher: DispatcherClass } = await import('./config.js');
     const port = parseInt(process.env.PORT || '4000');
-    const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+    let redis = null;
+    const redisUrl = process.env.REDIS_URL;
+    if (redisUrl) {
+        try {
+            redis = new Redis(redisUrl, {
+                maxRetriesPerRequest: 3,
+                retryStrategy: (times) => {
+                    if (times > 5) {
+                        console.log('[redis] Max retries reached, giving up. Using in-memory session manager.');
+                        return null; // stop retrying
+                    }
+                    return Math.min(times * 500, 3000);
+                },
+                lazyConnect: true,
+            });
+            await redis.connect();
+            console.log('[redis] Connected successfully');
+        }
+        catch (err) {
+            console.log(`[redis] Connection failed: ${err}. Using in-memory session manager.`);
+            redis = null;
+        }
+    }
+    else {
+        console.log('[redis] No REDIS_URL configured. Using in-memory session manager.');
+    }
     const { existsSync } = await import('fs');
     const socketPath = process.env.DOCKER_SOCKET ||
         (existsSync('/var/run/docker.sock') ? '/var/run/docker.sock' :
@@ -856,11 +896,11 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
     const planeClient = new PlaneClient(process.env.PLANE_API_URL || 'http://localhost:8000', process.env.PLANE_API_TOKEN || '');
     init({
         dispatcher: new DispatcherClass(agents),
-        queue: new TaskQueue(redis),
+        queue: redis ? new TaskQueue(redis) : { enqueue: async () => { }, dequeue: async () => null, depth: async () => 0, peek: async () => [] },
         containers: new ContainerManager(docker),
         plane: planeClient,
         webhookSecret: process.env.WEBHOOK_SECRET,
-        redis,
+        redis: redis ?? undefined,
     });
     serve({ fetch: app.fetch, port }, () => {
         console.log(`Orchestrator listening on port ${port}`);

@@ -5,6 +5,161 @@ const ACTIVE_SESSIONS_KEY = 'zenova:active-sessions';
 const SESSION_LOCK_KEY = (issueId) => `zenova:session-lock:${issueId}`;
 const STALE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const TERMINAL_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+// ─── In-memory SessionManager (works without Redis) ──────────────────────────
+export class InMemorySessionManager {
+    sessions = new Map();
+    issueSessions = new Map(); // issueId -> sessionIds (newest first)
+    activeSessions = new Set();
+    issueLocks = new Map(); // issueId -> expiry timestamp
+    async createSession(opts) {
+        // Check lock
+        const lockExpiry = this.issueLocks.get(opts.issueId);
+        if (lockExpiry && lockExpiry > Date.now()) {
+            console.log(`[session-mem] Lock exists for issue ${opts.issueId} — another session is active`);
+            return null;
+        }
+        // Set lock (10 min)
+        this.issueLocks.set(opts.issueId, Date.now() + 600_000);
+        const session = {
+            id: randomUUID(),
+            issueId: opts.issueId,
+            projectId: opts.projectId,
+            workspaceSlug: opts.workspaceSlug,
+            state: 'pending',
+            mode: opts.mode,
+            triggeredBy: opts.triggeredBy,
+            triggerCommentId: opts.triggerCommentId,
+            activities: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            parentSessionId: opts.parentSessionId,
+        };
+        this.sessions.set(session.id, session);
+        const existing = this.issueSessions.get(opts.issueId) ?? [];
+        existing.unshift(session.id);
+        this.issueSessions.set(opts.issueId, existing);
+        this.activeSessions.add(session.id);
+        console.log(`[session-mem] Created ${session.id} for issue ${opts.issueId} (${opts.mode})`);
+        return session;
+    }
+    async getSession(id) {
+        return this.sessions.get(id) ?? null;
+    }
+    async updateState(id, state) {
+        const session = this.sessions.get(id);
+        if (!session)
+            return;
+        session.state = state;
+        session.updatedAt = Date.now();
+        if (state === 'complete' || state === 'error') {
+            this.activeSessions.delete(id);
+            this.issueLocks.delete(session.issueId);
+        }
+    }
+    async addActivity(id, activity) {
+        const session = this.sessions.get(id);
+        if (!session)
+            return;
+        if (activity.type === 'tool_start' || activity.type === 'text')
+            session.state = 'active';
+        session.activities.push(activity);
+        session.updatedAt = Date.now();
+    }
+    async markActivityComplete(id, label) {
+        const session = this.sessions.get(id);
+        if (!session)
+            return;
+        for (let i = session.activities.length - 1; i >= 0; i--) {
+            if (session.activities[i].label === label && !session.activities[i].completed) {
+                session.activities[i].completed = true;
+                break;
+            }
+        }
+        session.updatedAt = Date.now();
+    }
+    async setProgressCommentId(id, commentId) {
+        const session = this.sessions.get(id);
+        if (session)
+            session.progressCommentId = commentId;
+    }
+    async setFinalResponse(id, response) {
+        const session = this.sessions.get(id);
+        if (!session)
+            return;
+        session.finalResponse = response;
+        session.updatedAt = Date.now();
+    }
+    async setError(id, error) {
+        const session = this.sessions.get(id);
+        if (!session)
+            return;
+        session.error = error;
+        session.state = 'error';
+        session.updatedAt = Date.now();
+        this.activeSessions.delete(id);
+        this.issueLocks.delete(session.issueId);
+    }
+    async getActiveSessionForIssue(issueId) {
+        if (!this.issueLocks.has(issueId))
+            return null;
+        const ids = this.issueSessions.get(issueId) ?? [];
+        if (!ids.length)
+            return null;
+        const session = this.sessions.get(ids[0]);
+        if (!session)
+            return null;
+        if (session.state === 'active' || session.state === 'awaiting_input' || session.state === 'pending')
+            return session;
+        return null;
+    }
+    async getAwaitingSessionForIssue(issueId) {
+        const ids = this.issueSessions.get(issueId) ?? [];
+        for (const sid of ids.slice(0, 5)) {
+            const session = this.sessions.get(sid);
+            if (session?.state === 'awaiting_input')
+                return session;
+        }
+        return null;
+    }
+    async getActiveSessions() {
+        const sessions = [];
+        for (const id of this.activeSessions) {
+            const s = this.sessions.get(id);
+            if (s)
+                sessions.push(s);
+        }
+        return sessions;
+    }
+    async cleanupStaleSessions() {
+        let cleaned = 0;
+        const now = Date.now();
+        for (const id of [...this.activeSessions]) {
+            const session = this.sessions.get(id);
+            if (!session) {
+                this.activeSessions.delete(id);
+                cleaned++;
+                continue;
+            }
+            if (now - session.updatedAt > STALE_TIMEOUT_MS) {
+                console.log(`[session-mem] Cleaning up stale session ${id}`);
+                await this.setError(id, 'Session timed out (no activity for 10 minutes)');
+                cleaned++;
+            }
+        }
+        return cleaned;
+    }
+    async getSessionsByIssue(issueId) {
+        const ids = this.issueSessions.get(issueId) ?? [];
+        const sessions = [];
+        for (const id of ids.slice(0, 20)) {
+            const s = this.sessions.get(id);
+            if (s)
+                sessions.push(s);
+        }
+        return sessions;
+    }
+}
+// ─── Redis-backed SessionManager ─────────────────────────────────────────────
 export class SessionManager {
     redis;
     constructor(redis) {

@@ -1,5 +1,5 @@
 import type { PlaneClient } from './plane-client.js'
-import type { SessionManager } from './agent-session.js'
+import type { SessionManager, InMemorySessionManager } from './agent-session.js'
 import type { ParsedStreamEvent } from './stream-parser.js'
 import type { AgentActivity } from './types.js'
 import { toolDisplayName } from './stream-parser.js'
@@ -17,7 +17,7 @@ export class ProgressReporter {
 
   constructor(
     private plane: PlaneClient,
-    private sessionManager: SessionManager,
+    private sessionManager: SessionManager | InMemorySessionManager,
     private sessionId: string,
     private workspace: string,
     private projectId: string,
