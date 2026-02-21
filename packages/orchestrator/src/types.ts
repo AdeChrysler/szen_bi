@@ -45,18 +45,21 @@ export interface RunningAgent {
 }
 
 export interface PlaneCommentPayload {
-  event: 'comment'
+  event: 'comment' | 'issue_comment'
   action: 'created' | 'updated' | 'deleted'
   data: {
     id: string
-    issue_id: string
+    issue: string              // Plane sends issue UUID here
+    issue_id: string           // set by normalizer (= issue)
     project: string
-    workspace: string
-    comment_stripped: string   // plain text — contains "@claude ..."
+    workspace: string          // normalized to slug by normalizer
+    comment_stripped: string   // normalized from comment_html if missing
     comment_html: string
+    actor?: string             // actor user ID
     actor_detail?: { id: string; display_name: string }
     external_source?: string
     external_id?: string
+    created_by?: string
   }
 }
 

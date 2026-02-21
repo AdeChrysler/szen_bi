@@ -111,6 +111,56 @@ function verifyWebhookSignature(body: string, signature: string | null): boolean
   }
 }
 
+// ─── Workspace UUID → slug mapping ───────────────────────────────────────────
+
+const workspaceSlugCache = new Map<string, string>()
+
+function getWorkspaceSlug(workspaceId: string): string {
+  // Check cache
+  const cached = workspaceSlugCache.get(workspaceId)
+  if (cached) return cached
+
+  // Check env var fallback
+  const defaultSlug = process.env.WORKSPACE_SLUG || ''
+  if (defaultSlug) {
+    workspaceSlugCache.set(workspaceId, defaultSlug)
+    return defaultSlug
+  }
+
+  // If it looks like a slug already (no dashes in UUID format), return as-is
+  if (!workspaceId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-/)) return workspaceId
+
+  return workspaceId  // fallback: use UUID (will fail, but logged)
+}
+
+// ─── Normalize Plane webhook comment payload ────────────────────────────────
+
+function normalizeCommentPayload(data: PlaneCommentPayload['data']): PlaneCommentPayload['data'] {
+  // Plane sends `issue` not `issue_id`
+  if (!data.issue_id && data.issue) {
+    data.issue_id = data.issue
+  }
+
+  // Plane sends workspace UUID, not slug — resolve it
+  if (data.workspace && data.workspace.match(/^[0-9a-f]{8}-[0-9a-f]{4}-/)) {
+    const slug = getWorkspaceSlug(data.workspace)
+    console.log(`[normalize] workspace UUID ${data.workspace} → slug "${slug}"`)
+    data.workspace = slug
+  }
+
+  // Extract comment_stripped from comment_html if missing
+  if (!data.comment_stripped && data.comment_html) {
+    data.comment_stripped = data.comment_html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  }
+
+  // Resolve actor_detail from actor/created_by if missing
+  if (!data.actor_detail && (data.actor || data.created_by)) {
+    data.actor_detail = { id: data.actor || data.created_by || 'unknown', display_name: 'User' }
+  }
+
+  return data
+}
+
 // ─── Self-loop prevention (3 layers) ────────────────────────────────────────
 
 function isBotComment(comment: PlaneCommentPayload['data']): boolean {
@@ -780,7 +830,7 @@ app.post('/webhooks/plane', async (c) => {
 
   // ── Comment event: check for @claude mention ───────────────────────────────
   if ((payload.event === 'comment' || payload.event === 'issue_comment') && payload.action === 'created') {
-    const comment = (payload as unknown as PlaneCommentPayload).data
+    const comment = normalizeCommentPayload((payload as unknown as PlaneCommentPayload).data)
     const result = await handleCommentEvent(comment)
     if (result.error === 'not initialized') return c.json({ error: result.error }, 503)
     if (result.error) return c.json({ error: result.error }, 500)
@@ -800,6 +850,7 @@ app.post('/webhooks/plane', async (c) => {
           const secrets = await buildSecrets(issue.workspace, issue.project)
           const syntheticComment: PlaneCommentPayload['data'] = {
             id: `assign-${randomUUID()}`,
+            issue: issue.id,
             issue_id: issue.id,
             project: issue.project,
             workspace: issue.workspace,

@@ -47,21 +47,24 @@ export interface RunningAgent {
     startedAt: string;
 }
 export interface PlaneCommentPayload {
-    event: 'comment';
+    event: 'comment' | 'issue_comment';
     action: 'created' | 'updated' | 'deleted';
     data: {
         id: string;
+        issue: string;
         issue_id: string;
         project: string;
         workspace: string;
         comment_stripped: string;
         comment_html: string;
+        actor?: string;
         actor_detail?: {
             id: string;
             display_name: string;
         };
         external_source?: string;
         external_id?: string;
+        created_by?: string;
     };
 }
 export type SessionState = 'pending' | 'active' | 'awaiting_input' | 'error' | 'complete';
